@@ -75,14 +75,26 @@ class DeskBot(commands.Bot):
         for ext in COGS:
             await self.load_extension(ext)
         # Guild sync = instant in listed servers; global sync covers any other invites.
+        # Skip guilds the bot isn't in yet (403 Missing Access) instead of crash-looping.
         if GUILD_IDS:
             for gid in GUILD_IDS:
                 guild = discord.Object(id=gid)
-                self.tree.copy_global_to(guild=guild)
-                synced = await self.tree.sync(guild=guild)
-                log.info("Synced %s guild commands to %s", len(synced), gid)
-        synced = await self.tree.sync()
-        log.info("Synced %s global commands", len(synced))
+                try:
+                    self.tree.copy_global_to(guild=guild)
+                    synced = await self.tree.sync(guild=guild)
+                    log.info("Synced %s guild commands to %s", len(synced), gid)
+                except discord.Forbidden:
+                    log.warning(
+                        "Cannot sync commands to guild %s yet — invite the bot there first",
+                        gid,
+                    )
+                except discord.HTTPException as exc:
+                    log.warning("Guild command sync failed for %s: %s", gid, exc)
+        try:
+            synced = await self.tree.sync()
+            log.info("Synced %s global commands", len(synced))
+        except discord.HTTPException as exc:
+            log.warning("Global command sync failed: %s", exc)
 
         @self.tree.error
         async def on_app_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
