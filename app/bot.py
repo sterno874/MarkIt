@@ -15,8 +15,12 @@ from app.security import extract_tickers
 from app.services.dispatch import run_blocking, send_function
 from app.services.workers import DeskWorkers
 from app.ui.bond_pill import BondPill
-from app.ui.pill import FN_TEMPLATE, REFRESH_TEMPLATE
-from app.ui.ticker_respond import publish_ticker_pill, refresh_ticker_message
+from app.ui.pill import EXPAND_TEMPLATE, FN_TEMPLATE, REFRESH_TEMPLATE
+from app.ui.ticker_respond import (
+    publish_ticker_pill,
+    refresh_ticker_message,
+    set_ticker_pill_expanded,
+)
 from app.services import gemini
 
 log = logging.getLogger("market-desk")
@@ -107,6 +111,49 @@ class RefreshButton(
             await interaction.followup.send(f"Refresh failed: {exc}", ephemeral=True)
 
 
+class ExpandButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=EXPAND_TEMPLATE,
+):
+    """Toggle collapsed ↔ expanded pill (tools + full stats)."""
+
+    def __init__(self, symbol: str = "AAPL", state: str = "0") -> None:
+        expanded = state == "1"
+        super().__init__(
+            discord.ui.Button(
+                label="Collapse" if expanded else "Expand",
+                style=discord.ButtonStyle.secondary if expanded else discord.ButtonStyle.primary,
+                custom_id=f"md:xp:{state}:{symbol}",
+            )
+        )
+        self.symbol = symbol
+        # Current state in custom_id; click flips it.
+        self.currently_expanded = expanded
+
+    @classmethod
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Button,
+        match: re.Match[str],
+        /,
+    ):
+        return cls(symbol=match.group("symbol"), state=match.group("state"))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if not interaction.message:
+            return
+        try:
+            await set_ticker_pill_expanded(
+                interaction.message,
+                self.symbol,
+                expanded=not self.currently_expanded,
+            )
+        except Exception as exc:
+            await interaction.followup.send(f"Expand failed: {exc}", ephemeral=True)
+
+
 class DeskBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -116,7 +163,7 @@ class DeskBot(commands.Bot):
         self.workers: DeskWorkers | None = None
 
     async def setup_hook(self) -> None:
-        self.add_dynamic_items(FunctionButton, RefreshButton)
+        self.add_dynamic_items(FunctionButton, RefreshButton, ExpandButton)
         for ext in COGS:
             await self.load_extension(ext)
         # Guild sync = instant in listed servers; global sync covers any other invites.

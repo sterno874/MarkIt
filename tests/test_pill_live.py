@@ -28,8 +28,17 @@ def test_pill_text_live_badge() -> None:
         change=1.5,
         change_pct=0.8,
         currency="USD",
+        market_cap=3e12,
+        summary="Apple designs phones.",
     )
-    text = pill_text(sec, previous_last=189.5, live=True)
-    assert "LIVE" in text
-    assert "tick ▲" in text
-    assert "AAPL" in text
+    collapsed = pill_text(sec, previous_last=189.5, live=True, expanded=False)
+    assert "LIVE" in collapsed
+    assert "tick ▲" in collapsed
+    assert "AAPL" in collapsed
+    assert "Apple designs" not in collapsed
+    assert "Mkt cap" not in collapsed
+
+    expanded = pill_text(sec, previous_last=189.5, live=True, expanded=True)
+    assert "**Apple**" in expanded
+    assert "Mkt cap" in expanded
+    assert "Apple designs" in expanded

@@ -13,6 +13,8 @@ from app.ui.links import external_links
 FN_TEMPLATE = r"md:fn:(?P<fn>gp|des|fa|cn|phdc|anr|ern|dvd|opt|short):(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
 # Manual refresh on a live pill
 REFRESH_TEMPLATE = r"md:ref:(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
+# Expand / collapse — state in custom_id: 0=collapsed (button expands), 1=expanded (button collapses)
+EXPAND_TEMPLATE = r"md:xp:(?P<state>[01]):(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
 
 
 def _tick_marker(last: float | None, previous_last: float | None) -> str:
@@ -31,6 +33,7 @@ def pill_text(
     previous_last: float | None = None,
     live: bool = True,
     as_of: datetime | None = None,
+    expanded: bool = False,
 ) -> str:
     change = fmt.signed(sec.change) if sec.change is not None else "—"
     change_pct = fmt.pct(sec.change_pct, already_percent=True) if sec.change_pct is not None else "—"
@@ -43,6 +46,16 @@ def pill_text(
     # IB-style: day direction owns the headline; last tick called out separately.
     when = (as_of or datetime.now(timezone.utc)).astimezone().strftime("%H:%M:%S")
     live_bit = f" · LIVE {when}" if live else f" · as of {when}"
+
+    # Collapsed: symbol + last + day move only. Unpack for the rest.
+    if not expanded:
+        return "\n".join(
+            [
+                f"# {sec.yahoo} · {sec.asset_label}",
+                f"{arrow} `{price}` **{change} ({change_pct})**{tick} · {sec.currency or ''}".rstrip()
+                + live_bit,
+            ]
+        )
 
     lines = [
         f"# {sec.yahoo} · {sec.asset_label}",
@@ -161,8 +174,36 @@ def extra_function_buttons(sec: Security) -> list[ui.Button]:
     ]
 
 
+def _expand_toggle_button(sec: Security, *, expanded: bool) -> ui.Button:
+    """custom_id state mirrors current view: 0=collapsed, 1=expanded."""
+    if expanded:
+        return ui.Button(
+            label="Collapse",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"md:xp:1:{sec.yahoo}",
+        )
+    return ui.Button(
+        label="Expand",
+        style=discord.ButtonStyle.primary,
+        custom_id=f"md:xp:0:{sec.yahoo}",
+    )
+
+
+def _collapsed_action_buttons(sec: Security) -> list[ui.Button]:
+    return [
+        _expand_toggle_button(sec, expanded=False),
+        ui.Button(
+            label="Refresh",
+            style=discord.ButtonStyle.success
+            if (sec.change or 0) >= 0
+            else discord.ButtonStyle.danger,
+            custom_id=f"md:ref:{sec.yahoo}",
+        ),
+    ]
+
+
 class TickerPill(ui.LayoutView):
-    """Bloomberg/IB-style quote card — green/red day accent, optional live tick."""
+    """Bloomberg/IB-style quote card — collapsed by default; Expand unpacks tools."""
 
     def __init__(
         self,
@@ -170,25 +211,38 @@ class TickerPill(ui.LayoutView):
         *,
         previous_last: float | None = None,
         live: bool = True,
+        expanded: bool = False,
         timeout: float | None = 900,
     ) -> None:
         super().__init__(timeout=timeout)
-        links = [
-            ui.Button(style=discord.ButtonStyle.link, label=label, url=url)
-            for label, url in external_links(sec)[:4]
-        ]
+        self.expanded = expanded
         children: list[ui.Item] = [
             ui.TextDisplay(
-                pill_text(sec, previous_last=previous_last, live=live)
+                pill_text(sec, previous_last=previous_last, live=live, expanded=expanded)
             ),
             ui.Separator(visible=True, spacing=discord.SeparatorSpacing.small),
-            ui.ActionRow(*function_buttons(sec)),
         ]
-        extras = extra_function_buttons(sec)
-        if extras:
-            children.append(ui.ActionRow(*extras))
-        if links:
-            children.append(ui.ActionRow(*links))
+        if expanded:
+            fns = function_buttons(sec)
+            # Row 1: Collapse + Refresh + primary research (max 5).
+            children.append(
+                ui.ActionRow(
+                    _expand_toggle_button(sec, expanded=True),
+                    *fns[:4],
+                )
+            )
+            rest = fns[4:] + extra_function_buttons(sec)
+            if rest:
+                children.append(ui.ActionRow(*rest[:5]))
+            links = [
+                ui.Button(style=discord.ButtonStyle.link, label=label, url=url)
+                for label, url in external_links(sec)[:4]
+            ]
+            if links:
+                children.append(ui.ActionRow(*links))
+        else:
+            children.append(ui.ActionRow(*_collapsed_action_buttons(sec)))
+
         # Day performance owns the accent strip (IB-style green / red).
         self.add_item(
             ui.Container(

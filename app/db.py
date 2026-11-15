@@ -172,6 +172,7 @@ class Database:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             (DATA_DIR / "tickets").mkdir(parents=True, exist_ok=True)
             self._ensure_column(conn, "paper_positions", "note", "TEXT")
+            self._ensure_column(conn, "live_pills", "expanded", "INTEGER NOT NULL DEFAULT 0")
 
     def _ensure_column(
         self, conn: sqlite3.Connection, table: str, column: str, decl: str
@@ -739,6 +740,7 @@ class Database:
         last_price: float | None,
         ttl_seconds: int,
         max_active: int = 40,
+        expanded: bool = False,
     ) -> None:
         from datetime import datetime, timedelta, timezone
 
@@ -749,13 +751,14 @@ class Database:
                 """
                 INSERT INTO live_pills(
                     message_id, channel_id, guild_id, symbol, last_price,
-                    created_at, updated_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, expires_at, expanded
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(message_id) DO UPDATE SET
                     symbol = excluded.symbol,
                     last_price = excluded.last_price,
                     updated_at = excluded.updated_at,
-                    expires_at = excluded.expires_at
+                    expires_at = excluded.expires_at,
+                    expanded = excluded.expanded
                 """,
                 (
                     message_id,
@@ -766,6 +769,7 @@ class Database:
                     now.isoformat(),
                     now.isoformat(),
                     expires.isoformat(),
+                    1 if expanded else 0,
                 ),
             )
             # Cap active pills — drop oldest extras.
@@ -832,6 +836,13 @@ class Database:
     def live_pill_remove(self, message_id: int) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM live_pills WHERE message_id = ?", (message_id,))
+
+    def live_pill_set_expanded(self, message_id: int, expanded: bool) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE live_pills SET expanded = ? WHERE message_id = ?",
+                (1 if expanded else 0, message_id),
+            )
 
 
 db = Database()

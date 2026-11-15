@@ -23,8 +23,9 @@ async def publish_ticker_pill(
     *,
     ephemeral: bool = False,
     live: bool = True,
+    expanded: bool = False,
 ) -> discord.Message | None:
-    view = TickerPill(sec, live=live)
+    view = TickerPill(sec, live=live, expanded=expanded)
     msg: discord.Message | Any | None = None
     if isinstance(destination, discord.Interaction):
         if destination.response.is_done():
@@ -65,9 +66,15 @@ async def refresh_ticker_message(
     *,
     previous_last: float | None = None,
     extend_live: bool = False,
+    expanded: bool | None = None,
 ) -> Security | None:
+    row = db.live_pill_get(message.id)
+    if expanded is None:
+        expanded = bool(dict(row).get("expanded")) if row else False
     sec = await asyncio.to_thread(get_security, symbol)
-    await message.edit(view=TickerPill(sec, previous_last=previous_last, live=True))
+    await message.edit(
+        view=TickerPill(sec, previous_last=previous_last, live=True, expanded=expanded)
+    )
     if extend_live:
         db.live_pill_touch(
             message.id,
@@ -75,7 +82,6 @@ async def refresh_ticker_message(
             extend_seconds=LIVE_PILL_TTL_SEC,
         )
     else:
-        row = db.live_pill_get(message.id)
         if row:
             db.live_pill_touch(message.id, last_price=sec.last)
         else:
@@ -90,5 +96,25 @@ async def refresh_ticker_message(
                     last_price=sec.last,
                     ttl_seconds=LIVE_PILL_TTL_SEC,
                     max_active=LIVE_PILL_MAX,
+                    expanded=expanded,
                 )
+    return sec
+
+
+async def set_ticker_pill_expanded(
+    message: discord.Message,
+    symbol: str,
+    *,
+    expanded: bool,
+) -> Security | None:
+    """Expand / collapse in place; keep live registration + last price."""
+    row = db.live_pill_get(message.id)
+    previous = float(row["last_price"]) if row and row["last_price"] is not None else None
+    sec = await asyncio.to_thread(get_security, symbol)
+    await message.edit(
+        view=TickerPill(sec, previous_last=previous, live=True, expanded=expanded)
+    )
+    if row:
+        db.live_pill_set_expanded(message.id, expanded)
+        db.live_pill_touch(message.id, last_price=sec.last, extend_seconds=LIVE_PILL_TTL_SEC)
     return sec
