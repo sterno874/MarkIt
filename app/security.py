@@ -10,7 +10,14 @@ import yfinance as yf
 
 from app import format as fmt
 
-# Aliases people type in chat → Yahoo symbol.
+# ISO 4217 codes we accept for FX pair inference (blocks APPLES→APP/LES etc.).
+FX_CURRENCIES = {
+    "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "CNY", "HKD",
+    "SGD", "SEK", "NOK", "DKK", "MXN", "ZAR", "INR", "KRW", "BRL", "TRY",
+    "PLN", "THB", "TWD", "ILS", "AED", "SAR", "RUB",
+}
+
+# Aliases people type in chat → Yahoo symbol (tickers + common company names).
 ALIASES: dict[str, str] = {
     "SPX": "^GSPC",
     "SP500": "^GSPC",
@@ -68,6 +75,57 @@ ALIASES: dict[str, str] = {
     "GBP": "GBPUSD=X",
     "DXY": "DX-Y.NYB",
     "DOLLAR": "DX-Y.NYB",
+    # Company / product names people say in NL
+    "APPLE": "AAPL",
+    "APPLES": "AAPL",
+    "GOOGLE": "GOOGL",
+    "GOOG": "GOOGL",
+    "ALPHABET": "GOOGL",
+    "MICROSOFT": "MSFT",
+    "AMAZON": "AMZN",
+    "META": "META",
+    "FACEBOOK": "META",
+    "NVIDIA": "NVDA",
+    "TESLA": "TSLA",
+    "NETFLIX": "NFLX",
+    "COSTCO": "COST",
+    "WALMART": "WMT",
+    "DISNEY": "DIS",
+    "COCA-COLA": "KO",
+    "COCACOLA": "KO",
+    "COKE": "KO",
+    "INTEL": "INTC",
+    "AMD": "AMD",
+    "UBER": "UBER",
+    "AIRBNB": "ABNB",
+    "SHOPIFY": "SHOP",
+    "SALESFORCE": "CRM",
+    "ORACLE": "ORCL",
+    "IBM": "IBM",
+    "JPMORGAN": "JPM",
+    "JPM": "JPM",
+    "GOLDMAN": "GS",
+    "BERKSHIRE": "BRK-B",
+    "EXXON": "XOM",
+    "CHEVRON": "CVX",
+    "BOEING": "BA",
+    "STARBUCKS": "SBUX",
+    "NIKE": "NKE",
+    "VISA": "V",
+    "MASTERCARD": "MA",
+    "PAYPAL": "PYPL",
+    "SQUARE": "XYZ",
+    "BLOCK": "XYZ",
+    "SNAP": "SNAP",
+    "TWITTER": "X",
+    "SPOTIFY": "SPOT",
+    "PALANTIR": "PLTR",
+    "SNOWFLAKE": "SNOW",
+    "CLOUDFLARE": "NET",
+    "ROBINHOOD": "HOOD",
+    "COINBASE": "COIN",
+    "MICROSTRATEGY": "MSTR",
+    "STRATEGY": "MSTR",
 }
 
 FX_PAIR = re.compile(r"^([A-Z]{3})[\/\-]?([A-Z]{3})$")
@@ -217,11 +275,19 @@ def normalize_symbol(raw: str) -> str:
     fx = FX_PAIR.match(cleaned.replace("-", "/").replace("=", "/"))
     if fx:
         base, quote = fx.group(1), fx.group(2)
-        if base == "USD" and quote != "USD":
-            # Yahoo uses JPY=X for USD/JPY.
-            special = {"JPY": "JPY=X", "CHF": "CHF=X", "CAD": "CAD=X", "CNY": "CNY=X", "HKD": "HKD=X"}
-            return special.get(quote, f"{base}{quote}=X")
-        return f"{base}{quote}=X"
+        # Only treat as FX when both legs are real currency codes.
+        # Otherwise APPLES / VOLUME / etc. become junk pairs like APPLES=X.
+        if base in FX_CURRENCIES and quote in FX_CURRENCIES and base != quote:
+            if base == "USD":
+                special = {
+                    "JPY": "JPY=X",
+                    "CHF": "CHF=X",
+                    "CAD": "CAD=X",
+                    "CNY": "CNY=X",
+                    "HKD": "HKD=X",
+                }
+                return special.get(quote, f"{base}{quote}=X")
+            return f"{base}{quote}=X"
 
     crypto = CRYPTO_SUFFIX.match(cleaned.replace("/", "-"))
     if crypto:

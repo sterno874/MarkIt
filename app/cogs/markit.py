@@ -19,15 +19,15 @@ from app.ui.pill import simple_embed
 from app.ui.ticker_respond import publish_ticker_pill
 
 EXAMPLE_PROMPTS = [
+    "show me apples volume for the past week",
     "show me the chart on AAPL",
+    "pill for Tesla",
+    "filings for MSFT",
     "news for NVDA",
     "quote BTC",
     "paper buy 10 AAPL",
-    "paper short NVDA",
     "my pnl",
-    "server pnl",
     "leaderboard",
-    "show open positions",
     "compare AAPL and GOOGL over a year",
     "IHRT 8 3/8 May 2027",
     "fear and greed",
@@ -89,14 +89,14 @@ class MarkIt(commands.Cog):
             await interaction.followup.send(
                 embed=simple_embed(
                     "MarkIt · natural language",
-                    "Just say what you want:\n"
-                    "• `show me the chart on AAPL`\n"
-                    "• `news for NVDA`\n"
-                    "• `paper buy 10 AAPL` · `my pnl` · `leaderboard` · `server pnl`\n"
-                    "• `compare AAPL MSFT over a year`\n"
-                    "• `IHRT 8 3/8 May 2027`\n"
-                    "• `fear and greed`\n\n"
-                    "Or use the classic slash commands — `/help topic:commands`.",
+                    "MarkIt picks a desk tool and posts the artifact:\n"
+                    "• `show me apples volume for the past week` → volume chart\n"
+                    "• `graph NVDA` / `chart AAPL 3m` → price chart\n"
+                    "• `pill for Tesla` / `quote AAPL` → live quote pill\n"
+                    "• `filings for MSFT` · `news for NVDA`\n"
+                    "• `paper buy 10 AAPL` · `my pnl` · `leaderboard`\n"
+                    "• `compare AAPL MSFT over a year` · `fear and greed`\n\n"
+                    "Or use classic slash commands — `/help topic:commands`.",
                 )
             )
             return
@@ -200,6 +200,16 @@ class MarkIt(commands.Cog):
                 file=discord.File(
                     buf,
                     filename=f"{symbol.replace('^', '').replace('=', '')}-chart.png",
+                )
+            )
+            return
+
+        if action == "volume":
+            buf = await run_blocking(charts.render_volume_chart, symbol, intent.period)
+            await interaction.followup.send(
+                file=discord.File(
+                    buf,
+                    filename=f"{symbol.replace('^', '').replace('=', '')}-volume.png",
                 )
             )
             return

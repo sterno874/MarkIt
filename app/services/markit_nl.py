@@ -1,8 +1,8 @@
-"""Natural-language router for `/markit`.
+"""MCP-style desk agent for `/markit`.
 
-Fast local parsing for common desk requests; optional Gemini JSON fallback
-when the phrase is ambiguous. Returns structured intents the cog executes
-as real desk outputs (chart image, news embed, quote pill, …).
+Plans which Discord desk tool to invoke (pill, chart, volume, filings, …),
+then the cog posts that artifact. Gemini is the primary planner when
+configured; a local pattern router is the fast offline fallback.
 """
 
 from __future__ import annotations
@@ -19,147 +19,110 @@ log = logging.getLogger("market-desk.markit_nl")
 
 PERIODS = {"1d", "5d", "1m", "3m", "6m", "1y", "5y", "ytd", "max"}
 
-STOPWORDS = {
-    "A",
-    "AN",
-    "THE",
-    "ME",
-    "MY",
-    "ON",
-    "FOR",
-    "OF",
-    "TO",
-    "AND",
-    "OR",
-    "VS",
-    "VERSUS",
-    "WITH",
-    "ABOUT",
-    "SHOW",
-    "GET",
-    "GIVE",
-    "PULL",
-    "FIND",
-    "LOOK",
-    "WANT",
-    "NEED",
-    "PLEASE",
-    "CAN",
-    "YOU",
-    "JUST",
-    "WHAT",
-    "WHATS",
-    "HOW",
-    "IS",
-    "ARE",
-    "WAS",
-    "WERE",
-    "IT",
-    "ITS",
-    "THIS",
-    "THAT",
-    "LAST",
-    "PRICE",
-    "QUOTE",
-    "CHART",
-    "GRAPH",
-    "PLOT",
-    "NEWS",
-    "HEADLINES",
-    "HEADLINE",
-    "EARNINGS",
-    "DIVIDEND",
-    "DIVIDENDS",
-    "OPTIONS",
-    "OPTION",
-    "FILINGS",
-    "FILING",
-    "HOLDERS",
-    "ANALYSTS",
-    "ANALYST",
-    "SHORT",
-    "INTEREST",
-    "CONGRESS",
-    "BOND",
-    "BONDS",
-    "COMPARE",
-    "PERFORMANCE",
-    "RELATIVE",
-    "HEATMAP",
-    "FEAR",
-    "GREED",
-    "FGI",
-    "HELP",
-    "FINANCIALS",
-    "INCOME",
-    "BALANCE",
-    "CASHFLOW",
-    "CASH",
-    "FLOW",
-    "STATEMENT",
-    "MONTH",
-    "MONTHS",
-    "YEAR",
-    "YEARS",
-    "WEEK",
-    "WEEKS",
-    "DAY",
-    "DAYS",
-    "TODAY",
-    "YTD",
-    "MAX",
-    "OVER",
-    "PAST",
-    "SINCE",
-    "FROM",
-    "IN",
-    "AT",
-    "UP",
-    "DOWN",
-    "SOME",
-    "ANY",
-    "INFO",
-    "INFORMATION",
-    "DATA",
-    "DESK",
-    "MARKIT",
-    "TELL",
-    "RETURN",
-    "RUN",
-    "DO",
-    "I",
-    "IM",
-    "I'D",
-    "LIKE",
-    "SEE",
-    "CHECK",
-    "QUICK",
-    "QUICKLY",
-    "PAPER",
-    "BOOK",
-    "BUY",
-    "SELL",
-    "LONG",
-    "SHORT",
-    "LEADERBOARD",
-    "PNL",
-    "P&L",
-    "ATTRIBUTION",
-    "POSITIONS",
-    "POSITION",
-    "CLOSE",
-    "CLOSED",
-    "OPEN",
-    "SERVER",
-    "TOTAL",
-    "TRADER",
-    "TRADERS",
-    "SHARES",
-    "SHARE",
-    "UNITS",
+# Desk tools the agent may call — each maps to a real Discord post type.
+DESK_TOOLS = """
+post_pill       — live quote pill / ticker card (price, day change)
+post_chart      — price chart image (with volume subplot)
+post_volume     — volume-focused chart for a period ("volume last week")
+post_news       — company headlines
+post_filings    — SEC filings
+post_financials — income / balance / cashflow snapshot
+post_holders    — institutional / insider holders
+post_analysts   — analyst ratings / price targets
+post_earnings   — earnings calendar + surprises
+post_dividends  — yield / ex-date
+post_options    — options chain snapshot
+post_short      — short interest
+post_congress   — congressional trades
+post_bond       — TRACE corporate bond card
+post_compare    — relative performance chart (2+ tickers)
+post_fgi        — fear & greed
+post_heatmap    — watchlist movers board
+post_help       — how to use MarkIt
+post_paper_buy / post_paper_sell / post_paper_close / post_paper_positions /
+post_paper_pnl / post_paper_leaderboard / post_paper_server — paper desk
+ask             — free-form research answer (text only; last resort)
+"""
+
+# Local action names used by the cog (kept stable).
+ACTION_ALIASES = {
+    "post_pill": "quote",
+    "post_chart": "chart",
+    "post_volume": "volume",
+    "post_news": "news",
+    "post_filings": "filings",
+    "post_financials": "financials",
+    "post_holders": "holders",
+    "post_analysts": "analysts",
+    "post_earnings": "earnings",
+    "post_dividends": "dividends",
+    "post_options": "options",
+    "post_short": "short",
+    "post_congress": "congress",
+    "post_bond": "bond",
+    "post_compare": "compare",
+    "post_fgi": "fgi",
+    "post_heatmap": "heatmap",
+    "post_help": "help",
+    "post_paper_buy": "paper_buy",
+    "post_paper_sell": "paper_sell",
+    "post_paper_close": "paper_close",
+    "post_paper_positions": "paper_positions",
+    "post_paper_pnl": "paper_pnl",
+    "post_paper_leaderboard": "paper_leaderboard",
+    "post_paper_server": "paper_server",
+    # Accept bare names too
+    "quote": "quote",
+    "pill": "quote",
+    "chart": "chart",
+    "graph": "chart",
+    "volume": "volume",
+    "news": "news",
+    "filings": "filings",
+    "financials": "financials",
+    "holders": "holders",
+    "analysts": "analysts",
+    "earnings": "earnings",
+    "dividends": "dividends",
+    "options": "options",
+    "short": "short",
+    "congress": "congress",
+    "bond": "bond",
+    "compare": "compare",
+    "fgi": "fgi",
+    "heatmap": "heatmap",
+    "help": "help",
+    "ask": "ask",
+    "paper_buy": "paper_buy",
+    "paper_sell": "paper_sell",
+    "paper_close": "paper_close",
+    "paper_positions": "paper_positions",
+    "paper_pnl": "paper_pnl",
+    "paper_leaderboard": "paper_leaderboard",
+    "paper_server": "paper_server",
 }
 
-# (action, compiled pattern) — first match wins; order = specificity
+STOPWORDS = {
+    "A", "AN", "THE", "ME", "MY", "ON", "FOR", "OF", "TO", "AND", "OR", "VS",
+    "VERSUS", "WITH", "ABOUT", "SHOW", "GET", "GIVE", "PULL", "FIND", "LOOK",
+    "WANT", "NEED", "PLEASE", "CAN", "YOU", "JUST", "WHAT", "WHATS", "HOW",
+    "IS", "ARE", "WAS", "WERE", "IT", "ITS", "THIS", "THAT", "LAST", "PRICE",
+    "QUOTE", "CHART", "GRAPH", "PLOT", "NEWS", "HEADLINES", "HEADLINE",
+    "EARNINGS", "DIVIDEND", "DIVIDENDS", "OPTIONS", "OPTION", "FILINGS",
+    "FILING", "HOLDERS", "ANALYSTS", "ANALYST", "SHORT", "INTEREST",
+    "CONGRESS", "BOND", "BONDS", "COMPARE", "PERFORMANCE", "RELATIVE",
+    "HEATMAP", "FEAR", "GREED", "FGI", "HELP", "FINANCIALS", "INCOME",
+    "BALANCE", "CASHFLOW", "CASH", "FLOW", "STATEMENT", "MONTH", "MONTHS",
+    "YEAR", "YEARS", "WEEK", "WEEKS", "DAY", "DAYS", "TODAY", "YTD", "MAX",
+    "OVER", "PAST", "SINCE", "FROM", "IN", "AT", "UP", "DOWN", "SOME", "ANY",
+    "INFO", "INFORMATION", "DATA", "DESK", "MARKIT", "TELL", "RETURN", "RUN",
+    "DO", "I", "IM", "I'D", "LIKE", "SEE", "CHECK", "QUICK", "QUICKLY",
+    "PAPER", "BOOK", "BUY", "SELL", "LONG", "SHORT", "LEADERBOARD", "PNL",
+    "P&L", "ATTRIBUTION", "POSITIONS", "POSITION", "CLOSE", "CLOSED", "OPEN",
+    "SERVER", "TOTAL", "TRADER", "TRADERS", "SHARES", "SHARE", "UNITS",
+    "VOLUME", "VOL", "VOLUMES", "PILL", "CARD", "LIVE",
+}
+
 ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("help", re.compile(r"\b(help|commands|how (do|to) use)\b", re.I)),
     (
@@ -200,10 +163,7 @@ ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "paper_sell",
-        re.compile(
-            r"\b((paper\s+)?(sell|short)|book\s+a\s+short|paper\s+short)\b",
-            re.I,
-        ),
+        re.compile(r"\b((paper\s+)?(sell|short)|book\s+a\s+short|paper\s+short)\b", re.I),
     ),
     (
         "paper_buy",
@@ -227,6 +187,14 @@ ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("holders", re.compile(r"\b(holders?|institutions?|insiders?|phdc|13f)\b", re.I)),
     ("financials", re.compile(r"\b(financials?|income\s+statement|balance\s+sheet|cash\s*flow|\bfa\b)\b", re.I)),
     ("news", re.compile(r"\b(news|headlines?|\bcn\b)\b", re.I)),
+    # Volume before generic chart/quote so "volume chart" / "apples volume" win.
+    (
+        "volume",
+        re.compile(
+            r"\b(volume|vol\b|trading\s+volume|share\s+volume|daily\s+volume)\b",
+            re.I,
+        ),
+    ),
     ("chart", re.compile(r"\b(chart|graph|plot|\bgp\b|candles?)\b", re.I)),
     ("quote", re.compile(r"\b(quote|price|des|ticker\s+card|pill|how'?s)\b", re.I)),
 ]
@@ -242,9 +210,16 @@ class Intent:
     query: str | None = None
     qty: float = 1.0
     position_id: int | None = None
-    trader_mention: int | None = None  # Discord snowflake from <@id>
+    trader_mention: int | None = None
     server_wide: bool = False
     source: str = "local"  # local | gemini | fallback
+
+
+def _normalize_action(raw: str | None) -> str:
+    if not raw:
+        return "ask"
+    key = str(raw).strip().lower().replace("-", "_")
+    return ACTION_ALIASES.get(key, key)
 
 
 def _detect_period(text: str) -> str:
@@ -257,13 +232,12 @@ def _detect_period(text: str) -> str:
         (r"\b(6\s*m(onths?)?|half\s+year|six\s+months?)\b", "6m"),
         (r"\b(3\s*m(onths?)?|quarter|three\s+months?)\b", "3m"),
         (r"\b(1\s*m(onth)?|one\s+month|a\s+month)\b", "1m"),
-        (r"\b(5\s*d(ays?)?|one\s+week|a\s+week|week)\b", "5d"),
+        (r"\b(5\s*d(ays?)?|one\s+week|a\s+week|past\s+week|this\s+week|last\s+week|\bweek\b)\b", "5d"),
         (r"\b(1\s*d(ay)?|today|intraday)\b", "1d"),
     ]
     for pattern, period in rules:
         if re.search(pattern, t):
             return period
-    # bare tokens like "period 3m"
     m = re.search(r"\b(1d|5d|1m|3m|6m|1y|5y|ytd|max)\b", t)
     if m:
         return m.group(1)
@@ -283,7 +257,6 @@ def _extract_symbols(text: str) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
 
-    # Explicit $TICKER
     for m in re.finditer(r"\$([A-Za-z][A-Za-z0-9.\-]{0,11})", text):
         sym = normalize_symbol(m.group(1))
         key = sym.upper()
@@ -291,7 +264,7 @@ def _extract_symbols(text: str) -> list[str]:
             seen.add(key)
             found.append(sym)
 
-    # Alias words (BTC, SPX, …) as whole words
+    # Company / index aliases as whole words (APPLE, BITCOIN, …)
     upper = text.upper()
     for alias in sorted(ALIASES.keys(), key=len, reverse=True):
         if re.search(rf"(?<![A-Z0-9]){re.escape(alias)}(?![A-Z0-9])", upper):
@@ -301,7 +274,6 @@ def _extract_symbols(text: str) -> list[str]:
                 seen.add(key)
                 found.append(sym)
 
-    # Generic ticker tokens
     for m in TICKER_TOKEN.finditer(text):
         raw = m.group(1)
         if raw.upper().lstrip("$") in STOPWORDS:
@@ -315,12 +287,18 @@ def _extract_symbols(text: str) -> list[str]:
         key = sym.upper()
         if key in seen:
             continue
-        # Skip tiny / likely English leftovers
         clean = re.sub(r"[^A-Za-z]", "", raw)
-        if len(clean) <= 1:
+        if len(clean) <= 1 or clean.upper() in STOPWORDS:
             continue
-        if clean.upper() in STOPWORDS:
-            continue
+        # Reject obvious non-tickers that slipped past FX guard
+        if sym.endswith("=X") and clean.upper() not in ALIASES:
+            legs = clean.upper()
+            from app.security import FX_CURRENCIES
+
+            if len(legs) == 6 and not (
+                legs[:3] in FX_CURRENCIES and legs[3:] in FX_CURRENCIES
+            ):
+                continue
         seen.add(key)
         found.append(sym)
 
@@ -335,7 +313,6 @@ def _detect_action(text: str) -> str | None:
 
 
 def _extract_qty(text: str) -> float:
-    # "buy 10 AAPL", "paper buy AAPL x5", "book 2.5 NVDA"
     patterns = [
         r"\b(?:buy|sell|long|short|book)\s+(\d+(?:\.\d+)?)\s+",
         r"\bx\s*(\d+(?:\.\d+)?)\b",
@@ -366,34 +343,26 @@ def _extract_mention(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
-    text = (text or "").strip()
-    if not text:
-        return None
-
-    action = _detect_action(text)
-    period = _detect_period(text)
-    statement = _detect_statement(text)
-    symbols = _extract_symbols(text)
-    qty = _extract_qty(text)
-    position_id = _extract_position_id(text)
-    mention = _extract_mention(text)
-    server_wide = bool(
-        re.search(r"\b(server|everyone|all\s+traders?|desk|team)\b", text, re.I)
-    )
-
-    # Bond free-text: keep original query when it looks like a bond string
+def _intent_from_parts(
+    *,
+    action: str,
+    symbols: list[str],
+    period: str,
+    statement: str,
+    qty: float,
+    position_id: int | None,
+    mention: int | None,
+    server_wide: bool,
+    last_ticker: str | None,
+    text: str,
+    source: str,
+) -> Intent | None:
     from app.market.bonds import looks_like_bond_query
 
     if looks_like_bond_query(text) or (action == "bond" and not symbols):
-        return Intent(
-            action="bond",
-            query=text,
-            source="local",
-        )
+        return Intent(action="bond", query=text, source=source)
 
-    # Paper desk — no symbol required for books / leaderboard / pnl
-    if action and action.startswith("paper_"):
+    if action.startswith("paper_"):
         if action == "paper_buy" and not (symbols or last_ticker):
             return None
         if action == "paper_sell" and not (symbols or last_ticker):
@@ -408,16 +377,16 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
             position_id=position_id,
             trader_mention=mention,
             server_wide=server_wide,
-            source="local",
+            source=source,
         )
 
     if action == "compare":
         if len(symbols) >= 2:
-            return Intent(action="compare", symbols=symbols[:8], period=period, source="local")
+            return Intent(action="compare", symbols=symbols[:8], period=period, source=source)
         return None
 
     if action in {"fgi", "heatmap", "help"}:
-        return Intent(action=action, source="local")
+        return Intent(action=action, source=source)
 
     symbol = symbols[0] if symbols else last_ticker
     if action and symbol:
@@ -427,63 +396,46 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
             symbols=symbols,
             period=period,
             statement=statement,
-            source="local",
+            source=source,
         )
 
-    # Bare ticker / "AAPL please" → quote
     if not action and symbol:
-        return Intent(action="quote", symbol=symbol, period=period, source="local")
+        return Intent(action="quote", symbol=symbol, period=period, source=source)
 
-    # Action without symbol but we have channel memory
     if action and last_ticker and action not in {"fgi", "heatmap", "help", "bond", "compare"}:
         return Intent(
             action=action,
             symbol=last_ticker,
             period=period,
             statement=statement,
-            source="local",
+            source=source,
         )
-
     return None
 
 
-def parse_with_gemini(text: str, *, last_ticker: str | None = None) -> Intent | None:
-    if not gemini.available():
+def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
+    text = (text or "").strip()
+    if not text:
         return None
 
-    prompt = f"""You route Discord Market Desk requests to ONE desk action.
-Return ONLY compact JSON (no markdown) with keys:
-  action: one of quote, chart, news, financials, holders, analysts, earnings, dividends,
-          options, short, filings, congress, bond, compare, fgi, heatmap, help, ask,
-          paper_buy, paper_sell, paper_close, paper_positions, paper_pnl,
-          paper_leaderboard, paper_server
-  symbol: ticker string or null
-  symbols: array of tickers (for compare) or []
-  period: one of 1d,5d,1m,3m,6m,1y,5y,ytd,max (default 6m)
-  statement: income|balance|cashflow (for financials)
-  query: original bond string if action=bond, else null
-  qty: number (default 1) for paper_buy/paper_sell
-  position_id: int or null for paper_close
-  trader_mention: Discord user snowflake int or null
-  server_wide: bool
+    return _intent_from_parts(
+        action=_detect_action(text) or "",
+        symbols=_extract_symbols(text),
+        period=_detect_period(text),
+        statement=_detect_statement(text),
+        qty=_extract_qty(text),
+        position_id=_extract_position_id(text),
+        mention=_extract_mention(text),
+        server_wide=bool(
+            re.search(r"\b(server|everyone|all\s+traders?|desk|team)\b", text, re.I)
+        ),
+        last_ticker=last_ticker,
+        text=text,
+        source="local",
+    )
 
-Examples:
-  "show me the chart on aapl" → {{"action":"chart","symbol":"AAPL","symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":false}}
-  "paper buy 10 AAPL" → {{"action":"paper_buy","symbol":"AAPL","symbols":[],"period":"6m","statement":"income","query":null,"qty":10,"position_id":null,"trader_mention":null,"server_wide":false}}
-  "leaderboard" → {{"action":"paper_leaderboard","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":false}}
-  "server pnl" → {{"action":"paper_server","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":true}}
-  "my pnl" → {{"action":"paper_pnl","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":false}}
-  "close position #3" → {{"action":"paper_close","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":3,"trader_mention":null,"server_wide":false}}
 
-Last ticker in channel: {last_ticker or "none"}
-User request: {text}
-"""
-    try:
-        raw = gemini.ask(prompt)
-    except Exception as exc:
-        log.warning("gemini route failed: %s", exc)
-        return None
-
+def _parse_planner_json(raw: str) -> dict | None:
     raw = raw.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -491,7 +443,6 @@ User request: {text}
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        # Sometimes models wrap JSON in prose — grab first {...}
         m = re.search(r"\{.*\}", raw, re.S)
         if not m:
             return None
@@ -499,35 +450,85 @@ User request: {text}
             data = json.loads(m.group(0))
         except json.JSONDecodeError:
             return None
+    return data if isinstance(data, dict) else None
 
-    action = str(data.get("action") or "ask").lower().strip()
+
+def plan_with_gemini(text: str, *, last_ticker: str | None = None) -> Intent | None:
+    """MCP-style planner: pick ONE desk tool to post (not a prose answer)."""
+    if not gemini.available():
+        return None
+
+    prompt = f"""You are MarkIt's desk agent (MCP-style tool router) inside Discord.
+Pick ONE tool to POST as a Discord message. Do NOT write research prose.
+Return ONLY compact JSON (no markdown).
+
+Available tools:
+{DESK_TOOLS}
+
+JSON keys:
+  action: tool name (prefer post_* names)
+  symbol: Yahoo ticker OR null (resolve company names: apples→AAPL, google→GOOGL)
+  symbols: array for compare, else []
+  period: 1d|5d|1m|3m|6m|1y|5y|ytd|max
+  statement: income|balance|cashflow
+  query: bond string if post_bond, else null
+  qty: number for paper trades (default 1)
+  position_id: int or null
+  trader_mention: snowflake or null
+  server_wide: bool
+
+Rules:
+- "show me apples volume for the past week" → post_volume / AAPL / 5d
+- "graph NVDA" / "chart apple 3m" → post_chart
+- "quote AAPL" / "pill on tesla" → post_pill
+- "filings for MSFT" → post_filings
+- Never invent FX pairs from English words (APPLES is Apple Inc., not FX).
+- Prefer the most specific artifact for what they asked.
+
+Last ticker in channel: {last_ticker or "none"}
+User request: {text}
+"""
+    try:
+        # Planner must NOT use research tools — we want a JSON plan, then the
+        # cog posts the Discord artifact. Use ask_raw if present; else ask.
+        if hasattr(gemini, "ask_plain"):
+            raw = gemini.ask_plain(prompt)
+        else:
+            raw = gemini.ask(prompt)
+    except Exception as exc:
+        log.warning("gemini desk plan failed: %s", exc)
+        return None
+
+    data = _parse_planner_json(raw)
+    if not data:
+        return None
+
+    action = _normalize_action(data.get("action"))
     symbol = data.get("symbol")
     symbols = data.get("symbols") or []
     if isinstance(symbols, str):
         symbols = [s for s in symbols.replace(",", " ").split() if s.strip()]
     period = str(data.get("period") or "6m").lower()
     if period not in PERIODS:
-        period = "6m"
+        period = _detect_period(text)
     statement = str(data.get("statement") or "income").lower()
     if statement not in {"income", "balance", "cashflow"}:
         statement = "income"
     query = data.get("query")
-    qty = data.get("qty", 1)
     try:
-        qty_f = float(qty)
+        qty_f = float(data.get("qty", 1) or 1)
     except (TypeError, ValueError):
         qty_f = 1.0
-    position_id = data.get("position_id")
     try:
-        position_id_i = int(position_id) if position_id is not None else None
+        position_id_i = int(data["position_id"]) if data.get("position_id") is not None else None
     except (TypeError, ValueError):
         position_id_i = None
-    trader_mention = data.get("trader_mention")
     try:
-        trader_mention_i = int(trader_mention) if trader_mention is not None else None
+        trader_mention_i = (
+            int(data["trader_mention"]) if data.get("trader_mention") is not None else None
+        )
     except (TypeError, ValueError):
         trader_mention_i = None
-    server_wide = bool(data.get("server_wide"))
 
     paper_actions = {
         "paper_buy",
@@ -539,7 +540,10 @@ User request: {text}
         "paper_server",
     }
     if symbol:
-        symbol = normalize_symbol(str(symbol))
+        try:
+            symbol = normalize_symbol(str(symbol))
+        except Exception:
+            symbol = None
     elif last_ticker and action not in {
         "fgi",
         "heatmap",
@@ -553,7 +557,7 @@ User request: {text}
     elif last_ticker and action in {"paper_buy", "paper_sell"} and not symbol:
         symbol = last_ticker
 
-    norm_symbols = []
+    norm_symbols: list[str] = []
     for s in symbols:
         try:
             norm_symbols.append(normalize_symbol(str(s)))
@@ -570,19 +574,68 @@ User request: {text}
         qty=qty_f,
         position_id=position_id_i,
         trader_mention=trader_mention_i,
-        server_wide=server_wide,
+        server_wide=bool(data.get("server_wide")),
         source="gemini",
     )
 
 
+# Back-compat name used by older tests / imports
+def parse_with_gemini(text: str, *, last_ticker: str | None = None) -> Intent | None:
+    return plan_with_gemini(text, last_ticker=last_ticker)
+
+
 def resolve_intent(text: str, *, last_ticker: str | None = None) -> Intent:
+    """Plan which desk tool to post.
+
+    Prefer Gemini (agent) when available so company names + nuanced asks
+    ("volume last week", "filings", "pill") map to the right artifact.
+    Fall back to local patterns when Gemini is down or returns junk.
+    """
+    # Fast local path when the phrase is already unambiguous ticker+verb.
     local = parse_local(text, last_ticker=last_ticker)
+    local_confident = bool(
+        local
+        and local.action
+        and local.action != "ask"
+        and (
+            local.action in {"fgi", "heatmap", "help"}
+            or local.action.startswith("paper_")
+            or (local.symbol and local.action in {
+                "chart", "volume", "news", "filings", "quote", "compare",
+                "financials", "holders", "analysts", "earnings", "dividends",
+                "options", "short", "congress", "bond",
+            })
+            or (local.action == "compare" and len(local.symbols) >= 2)
+            or (local.action == "bond" and local.query)
+        )
+    )
+
+    # Company-name / volume / messy English → let the agent decide first.
+    messy = bool(
+        re.search(
+            r"\b(apple|apples|google|alphabet|microsoft|amazon|nvidia|tesla|"
+            r"volume|filings?|pill|graph|show me|what(?:'| i)?s)\b",
+            text,
+            re.I,
+        )
+    )
+
+    if gemini.available() and (messy or not local_confident):
+        gem = plan_with_gemini(text, last_ticker=last_ticker)
+        if gem and gem.action and gem.action != "ask":
+            return gem
+
+    if local_confident and local:
+        return local
+
+    if gemini.available():
+        gem = plan_with_gemini(text, last_ticker=last_ticker)
+        if gem:
+            return gem
+
     if local:
         return local
-    gem = parse_with_gemini(text, last_ticker=last_ticker)
-    if gem:
-        return gem
-    # Last resort: treat as free-form ask / quote attempt
+
     symbols = _extract_symbols(text)
     if symbols:
         return Intent(action="quote", symbol=symbols[0], source="fallback")

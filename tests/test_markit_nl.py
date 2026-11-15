@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.security import normalize_symbol
 from app.services.markit_nl import parse_local
 
 
@@ -8,6 +9,22 @@ def test_chart_aapl() -> None:
     assert intent is not None
     assert intent.action == "chart"
     assert intent.symbol and "AAPL" in intent.symbol.upper()
+
+
+def test_apples_volume_week() -> None:
+    """Company name + volume + period — the ask that previously became APPLES=X."""
+    assert normalize_symbol("apples") == "AAPL"
+    assert normalize_symbol("APPLES") == "AAPL"
+    intent = parse_local("show me apples volume for the past week")
+    assert intent is not None
+    assert intent.action == "volume"
+    assert intent.symbol == "AAPL"
+    assert intent.period == "5d"
+
+
+def test_apples_not_fx() -> None:
+    assert not normalize_symbol("APPLES").endswith("=X")
+    assert not normalize_symbol("VOLUME").endswith("=X")
 
 
 def test_news_nvda() -> None:
@@ -48,3 +65,12 @@ def test_period_3m() -> None:
     intent = parse_local("chart AAPL for 3 months")
     assert intent is not None
     assert intent.period == "3m"
+
+
+def test_filings_and_pill_verbs() -> None:
+    filings = parse_local("filings for MSFT")
+    assert filings and filings.action == "filings"
+    assert filings.symbol == "MSFT"
+    pill = parse_local("pill for AAPL")
+    assert pill and pill.action == "quote"
+    assert pill.symbol == "AAPL"

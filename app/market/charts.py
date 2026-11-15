@@ -65,6 +65,57 @@ def render_chart(
     return buf
 
 
+def render_volume_chart(
+    symbol: str,
+    period: str = "5d",
+    *,
+    title: str | None = None,
+) -> io.BytesIO:
+    """Volume-first chart — for 'show me apples volume for the past week'."""
+    p, interval = PERIOD_MAP.get(period.lower(), ("5d", "15m"))
+    # Prefer daily bars for multi-day volume requests.
+    if period.lower() in {"5d", "1m", "3m", "6m", "1y", "ytd"}:
+        interval = "1d"
+        if period.lower() == "5d":
+            p = "10d"  # include a bit of context around "the past week"
+    df = history(symbol, period=p, interval=interval)
+    if df is None or df.empty or "Volume" not in df.columns:
+        raise ValueError(f"No volume history for {symbol}")
+
+    vol = df["Volume"].fillna(0)
+    fig, (axp, axv) = plt.subplots(
+        2,
+        1,
+        figsize=(10, 5.2),
+        sharex=True,
+        gridspec_kw={"height_ratios": [1.4, 2.4]},
+        constrained_layout=True,
+    )
+    color = "#2ecc71" if float(df["Close"].iloc[-1]) >= float(df["Close"].iloc[0]) else "#e74c3c"
+    axp.plot(df.index, df["Close"], color=color, linewidth=1.5)
+    axp.set_ylabel("Price")
+    axp.grid(True, alpha=0.25)
+    axp.set_title(title or f"{symbol} · volume · {period.upper()}")
+
+    up = df["Close"] >= df["Close"].shift(1)
+    bar_colors = ["#2ecc71" if bool(u) else "#e74c3c" for u in up.fillna(True)]
+    axv.bar(df.index, vol, width=0.8, color=bar_colors, alpha=0.85)
+    axv.set_ylabel("Volume")
+    axv.grid(True, alpha=0.2)
+    if len(vol):
+        avg = float(vol.mean())
+        axv.axhline(avg, color="#95a5a6", linewidth=0.9, linestyle="--", label=f"avg {avg:,.0f}")
+        axv.legend(loc="upper left", fontsize=8, frameon=False)
+    for spine in (*axp.spines.values(), *axv.spines.values()):
+        spine.set_alpha(0.3)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=140)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
 def render_compare(symbols: list[str], period: str = "6m") -> io.BytesIO:
     p, _ = PERIOD_MAP.get(period.lower(), ("6mo", "1d"))
     raw = download_closes(symbols, period=p)

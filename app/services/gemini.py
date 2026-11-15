@@ -87,21 +87,21 @@ TOOLS = [
 ]
 
 
-def ask(prompt: str, *, context: str | None = None) -> str:
-    if not GEMINI_API_KEY:
-        return "Gemini is not configured. Add `GEMINI_API_KEY` to `.env` and restart the bot."
-
+def _generate(contents: str, *, system: str, tools: list | None, temperature: float) -> str:
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    contents = prompt if not context else f"Context:\n{context}\n\nUser:\n{prompt}"
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM,
-        tools=TOOLS,
-        temperature=0.3,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=8),
-    )
+    kwargs: dict[str, Any] = {
+        "system_instruction": system,
+        "temperature": temperature,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(
+            maximum_remote_calls=8
+        )
+    config = types.GenerateContentConfig(**kwargs)
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -109,7 +109,6 @@ def ask(prompt: str, *, context: str | None = None) -> str:
             config=config,
         )
     except Exception as exc:
-        # Fall back to a broadly available flash id.
         if "not found" in str(exc).lower() or "NOT_FOUND" in str(exc):
             response = client.models.generate_content(
                 model="gemini-3-flash-preview",
@@ -119,9 +118,28 @@ def ask(prompt: str, *, context: str | None = None) -> str:
         else:
             raise
     text = response.text
-    if text:
-        return text.strip()
-    return "No response from Gemini."
+    return text.strip() if text else ""
+
+
+def ask(prompt: str, *, context: str | None = None) -> str:
+    """Research Q&A with live Yahoo/SEC tools."""
+    if not GEMINI_API_KEY:
+        return "Gemini is not configured. Add `GEMINI_API_KEY` to `.env` and restart the bot."
+
+    contents = prompt if not context else f"Context:\n{context}\n\nUser:\n{prompt}"
+    text = _generate(contents, system=SYSTEM, tools=TOOLS, temperature=0.3)
+    return text or "No response from Gemini."
+
+
+def ask_plain(prompt: str) -> str:
+    """Planner / JSON-only calls — no research tools, so the model returns a plan."""
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not configured")
+    system = (
+        "You are a routing agent. Reply with the requested format only "
+        "(usually compact JSON). No markdown fences unless asked. No prose."
+    )
+    return _generate(prompt, system=system, tools=None, temperature=0.1)
 
 
 def summarize_bug(description: str, command: str | None, context: dict[str, Any]) -> str:

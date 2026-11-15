@@ -132,7 +132,7 @@ Each fill is attributed to the Discord user who booked it. Leaderboard = realize
     "ask": """
 ## Natural language (`/markit`) + Gemini (`/ask`)
 
-`/markit show me the chart on AAPL` — routes to the real desk output (chart image, news, pill…).
+`/markit show me apples volume for the past week` — agent picks a desk tool and posts the artifact (volume chart, price chart, pill, filings…).
 Works offline via local parsing; uses Gemini only when the phrase is ambiguous.
 
 `/ask What happened to NVDA after earnings?` — free-form Gemini Q&A (needs `GEMINI_API_KEY`).
