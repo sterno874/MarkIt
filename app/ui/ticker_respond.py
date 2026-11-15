@@ -36,8 +36,15 @@ async def publish_ticker_pill(
     else:
         msg = await destination.send(view=view)
 
-    # Only live-tick tradeable quotes — never register empty shells (APPLES=X etc.).
-    if live and msg is not None and not ephemeral and sec.last is not None:
+    # Only live-tick liquid cash quotes — skip empty shells and option contracts
+    # (OCC symbols don't have reliable Yahoo intraday ticks).
+    if (
+        live
+        and msg is not None
+        and not ephemeral
+        and sec.last is not None
+        and not sec.is_option
+    ):
         guild_id = 0
         channel_id = getattr(msg, "channel", None) and msg.channel.id
         if isinstance(destination, discord.Interaction):

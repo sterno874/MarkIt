@@ -9,6 +9,7 @@ from discord.ext import commands
 
 from app.config import GUILD_IDS
 from app.db import db
+from app.services.dispatch import send_function
 from app.services.workers import DeskWorkers
 from app.ui.pill import EXPAND_TEMPLATE, FN_TEMPLATE, REFRESH_TEMPLATE
 from app.ui.ticker_respond import refresh_ticker_message, set_ticker_pill_expanded
@@ -55,7 +56,14 @@ class FunctionButton(
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        await send_function(interaction, self.fn, self.symbol)
+        try:
+            await send_function(interaction, self.fn, self.symbol)
+        except Exception as exc:
+            log.exception("function button %s %s failed", self.fn, self.symbol)
+            await interaction.followup.send(
+                f"Couldn't run `{self.fn}` on `{self.symbol}`: {exc}",
+                ephemeral=True,
+            )
 
 
 class RefreshButton(
