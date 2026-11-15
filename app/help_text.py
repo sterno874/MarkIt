@@ -18,6 +18,7 @@ HELP_TOPICS: dict[str, str] = {
 ## Tickers & the pill
 
 - Paste `$AAPL` or a message that is only a symbol → pill with price and buttons
+- Pills are **IB-style live**: green/red accent for the day, auto-refresh ~every 20s for ~12 minutes, **Refresh** button to tick now
 - Buttons map to Bloomberg-style functions: **GP** chart, **DES** description, **FA** financials, **CN** news, **PHDC** holders, **ANR** analysts, **ERN** earnings, **DVD** dividends
 - The channel remembers the last ticker for a few minutes, so `/chart` with no symbol uses it
 - Slash fields autocomplete: type a few letters on `symbol` / `query` / `tickers` to search Yahoo (and OpenFIGI for `/bond`)

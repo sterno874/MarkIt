@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import discord
 from discord import ui
 
@@ -9,18 +11,44 @@ from app.ui.links import external_links
 
 # custom_id: md:fn:<function>:<SYMBOL>
 FN_TEMPLATE = r"md:fn:(?P<fn>gp|des|fa|cn|phdc|anr|ern|dvd|opt|short):(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
+# Manual refresh on a live pill
+REFRESH_TEMPLATE = r"md:ref:(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
 
 
-def pill_text(sec: Security) -> str:
+def _tick_marker(last: float | None, previous_last: float | None) -> str:
+    if last is None or previous_last is None:
+        return ""
+    if last > previous_last:
+        return " · tick ▲"
+    if last < previous_last:
+        return " · tick ▼"
+    return " · ="
+
+
+def pill_text(
+    sec: Security,
+    *,
+    previous_last: float | None = None,
+    live: bool = True,
+    as_of: datetime | None = None,
+) -> str:
     change = fmt.signed(sec.change) if sec.change is not None else "—"
     change_pct = fmt.pct(sec.change_pct, already_percent=True) if sec.change_pct is not None else "—"
-    arrow = "▲" if (sec.change or 0) > 0 else "▼" if (sec.change or 0) < 0 else "•"
+    day_up = (sec.change or 0) > 0
+    day_down = (sec.change or 0) < 0
+    arrow = "▲" if day_up else "▼" if day_down else "•"
     price = fmt.number(sec.last, 4 if (sec.last or 0) < 10 else 2)
+    tick = _tick_marker(sec.last, previous_last)
+
+    # IB-style: day direction owns the headline; last tick called out separately.
+    when = (as_of or datetime.now(timezone.utc)).astimezone().strftime("%H:%M:%S")
+    live_bit = f" · LIVE {when}" if live else f" · as of {when}"
 
     lines = [
         f"# {sec.yahoo} · {sec.asset_label}",
         f"**{sec.name}**",
-        f"{arrow} `{price}` {change} ({change_pct}) · {sec.currency or ''}".rstrip(),
+        f"{arrow} `{price}` **{change} ({change_pct})**{tick} · {sec.currency or ''}".rstrip()
+        + live_bit,
     ]
 
     meta: list[str] = []
@@ -63,7 +91,6 @@ def pill_text(sec: Security) -> str:
         if sec.trailing_pe:
             stats.append(f"P/E `{fmt.number(sec.trailing_pe)}`")
         if sec.yield_:
-            # Yahoo dividendYield sometimes already percent-ish (0.3 meaning 0.3%)
             y = sec.yield_
             stats.append(f"Yield `{fmt.pct(y if y > 1 else y, already_percent=y > 1)}`")
         stats.append(f"Vol `{fmt.compact(sec.volume)}`")
@@ -74,7 +101,7 @@ def pill_text(sec: Security) -> str:
 
     if sec.summary and sec.is_equity_like:
         lines.append("")
-        lines.append(fmt.truncate(sec.summary, 320))
+        lines.append(fmt.truncate(sec.summary, 280))
 
     return "\n".join(lines)
 
@@ -82,6 +109,13 @@ def pill_text(sec: Security) -> str:
 def function_buttons(sec: Security) -> list[ui.Button]:
     symbol = sec.yahoo
     buttons: list[ui.Button] = [
+        ui.Button(
+            label="Refresh",
+            style=discord.ButtonStyle.success
+            if (sec.change or 0) >= 0
+            else discord.ButtonStyle.danger,
+            custom_id=f"md:ref:{symbol}",
+        ),
         ui.Button(label="GP Chart", style=discord.ButtonStyle.primary, custom_id=f"md:fn:gp:{symbol}"),
         ui.Button(label="DES", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:des:{symbol}"),
     ]
@@ -90,15 +124,21 @@ def function_buttons(sec: Security) -> list[ui.Button]:
             [
                 ui.Button(label="FA", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:fa:{symbol}"),
                 ui.Button(label="CN News", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:cn:{symbol}"),
-                ui.Button(label="PHDC", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:phdc:{symbol}"),
             ]
         )
-        # Second row worth of extras via extra ActionRow below.
     elif sec.is_option:
         buttons.extend(
             [
-                ui.Button(label="Underlying", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:des:{sec.underlying or symbol}"),
-                ui.Button(label="Chain", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:opt:{sec.underlying or symbol}"),
+                ui.Button(
+                    label="Underlying",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"md:fn:des:{sec.underlying or symbol}",
+                ),
+                ui.Button(
+                    label="Chain",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"md:fn:opt:{sec.underlying or symbol}",
+                ),
             ]
         )
     elif sec.is_crypto or sec.is_fx or sec.is_future or sec.is_index:
@@ -113,23 +153,34 @@ def extra_function_buttons(sec: Security) -> list[ui.Button]:
         return []
     symbol = sec.yahoo
     return [
+        ui.Button(label="PHDC", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:phdc:{symbol}"),
         ui.Button(label="ANR", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:anr:{symbol}"),
         ui.Button(label="ERN", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:ern:{symbol}"),
         ui.Button(label="DVD", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:dvd:{symbol}"),
         ui.Button(label="Options", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:opt:{symbol}"),
-        ui.Button(label="Short", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:short:{symbol}"),
     ]
 
 
 class TickerPill(ui.LayoutView):
-    def __init__(self, sec: Security, *, timeout: float | None = 600) -> None:
+    """Bloomberg/IB-style quote card — green/red day accent, optional live tick."""
+
+    def __init__(
+        self,
+        sec: Security,
+        *,
+        previous_last: float | None = None,
+        live: bool = True,
+        timeout: float | None = 900,
+    ) -> None:
         super().__init__(timeout=timeout)
         links = [
             ui.Button(style=discord.ButtonStyle.link, label=label, url=url)
-            for label, url in external_links(sec)[:5]
+            for label, url in external_links(sec)[:4]
         ]
         children: list[ui.Item] = [
-            ui.TextDisplay(pill_text(sec)),
+            ui.TextDisplay(
+                pill_text(sec, previous_last=previous_last, live=live)
+            ),
             ui.Separator(visible=True, spacing=discord.SeparatorSpacing.small),
             ui.ActionRow(*function_buttons(sec)),
         ]
@@ -138,6 +189,7 @@ class TickerPill(ui.LayoutView):
             children.append(ui.ActionRow(*extras))
         if links:
             children.append(ui.ActionRow(*links))
+        # Day performance owns the accent strip (IB-style green / red).
         self.add_item(
             ui.Container(
                 *children,

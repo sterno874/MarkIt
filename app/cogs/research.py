@@ -23,7 +23,8 @@ from app.market.sentiment import crypto_fear_greed, stock_fear_greed
 from app.security import normalize_symbol
 from app.services.dispatch import run_blocking, send_function
 from app.ui.bond_respond import send_bond_card
-from app.ui.pill import TickerPill, simple_embed
+from app.ui.pill import simple_embed
+from app.ui.ticker_respond import publish_ticker_pill
 
 log = logging.getLogger("market-desk.research")
 
@@ -58,7 +59,7 @@ class Research(commands.Cog):
             return
         sec = await run_blocking(get_security, sym)
         self._remember(interaction, sec.yahoo)
-        await interaction.followup.send(view=TickerPill(sec))
+        await publish_ticker_pill(interaction, sec)
 
     async def _send_chart(
         self,
@@ -335,7 +336,7 @@ class Research(commands.Cog):
         sym = normalize_symbol(query)
         sec = await run_blocking(get_security, sym)
         self._remember(interaction, sec.yahoo)
-        await interaction.followup.send(view=TickerPill(sec))
+        await publish_ticker_pill(interaction, sec)
 
 
 def _wire_autocomplete(cog: Research) -> None:

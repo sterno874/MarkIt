@@ -156,6 +156,17 @@ class Database:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS live_pills (
+                    message_id INTEGER PRIMARY KEY,
+                    channel_id INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    symbol TEXT NOT NULL,
+                    last_price REAL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
                 """
             )
             DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -716,6 +727,111 @@ class Database:
                 """,
                 (key, value),
             )
+
+    # ---- live pills ----
+    def live_pill_register(
+        self,
+        *,
+        message_id: int,
+        channel_id: int,
+        guild_id: int,
+        symbol: str,
+        last_price: float | None,
+        ttl_seconds: int,
+        max_active: int = 40,
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        expires = now + timedelta(seconds=ttl_seconds)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO live_pills(
+                    message_id, channel_id, guild_id, symbol, last_price,
+                    created_at, updated_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_id) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    last_price = excluded.last_price,
+                    updated_at = excluded.updated_at,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    message_id,
+                    channel_id,
+                    guild_id,
+                    symbol.upper(),
+                    last_price,
+                    now.isoformat(),
+                    now.isoformat(),
+                    expires.isoformat(),
+                ),
+            )
+            # Cap active pills — drop oldest extras.
+            rows = list(
+                conn.execute(
+                    "SELECT message_id FROM live_pills ORDER BY created_at DESC"
+                )
+            )
+            for row in rows[max_active:]:
+                conn.execute(
+                    "DELETE FROM live_pills WHERE message_id = ?",
+                    (row["message_id"],),
+                )
+
+    def live_pill_get(self, message_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM live_pills WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+
+    def live_pill_touch(
+        self,
+        message_id: int,
+        *,
+        last_price: float | None,
+        extend_seconds: int | None = None,
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with self.connect() as conn:
+            if extend_seconds:
+                expires = (now + timedelta(seconds=extend_seconds)).isoformat()
+                conn.execute(
+                    """
+                    UPDATE live_pills
+                    SET last_price = ?, updated_at = ?, expires_at = ?
+                    WHERE message_id = ?
+                    """,
+                    (last_price, now.isoformat(), expires, message_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE live_pills
+                    SET last_price = ?, updated_at = ?
+                    WHERE message_id = ?
+                    """,
+                    (last_price, now.isoformat(), message_id),
+                )
+
+    def live_pills_active(self) -> list[sqlite3.Row]:
+        now = utcnow()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM live_pills WHERE expires_at < ?", (now,))
+            return list(
+                conn.execute(
+                    "SELECT * FROM live_pills WHERE expires_at >= ? ORDER BY updated_at ASC",
+                    (now,),
+                )
+            )
+
+    def live_pill_remove(self, message_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM live_pills WHERE message_id = ?", (message_id,))
 
 
 db = Database()

@@ -8,7 +8,8 @@ import discord
 from app import format as fmt
 from app.market import charts, congress, filings, news, statements
 from app.market.quotes import get_security
-from app.ui.pill import TickerPill, simple_embed
+from app.ui.pill import simple_embed
+from app.ui.ticker_respond import publish_ticker_pill
 
 
 async def run_blocking(func, *args, **kwargs):
@@ -28,7 +29,10 @@ async def send_function(
             await _send_chart(destination, symbol, ephemeral=ephemeral)
         elif fn == "des":
             sec = await run_blocking(get_security, symbol)
-            await _respond(destination, view=TickerPill(sec), ephemeral=ephemeral)
+            if isinstance(destination, discord.Interaction):
+                await publish_ticker_pill(destination, sec, ephemeral=ephemeral)
+            else:
+                await publish_ticker_pill(destination, sec)
         elif fn == "fa":
             data = await run_blocking(statements.financials, symbol, "income", True)
             await _respond(destination, embed=simple_embed("FA · Financials", data["text"]), ephemeral=ephemeral)

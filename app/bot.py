@@ -15,7 +15,8 @@ from app.security import extract_tickers
 from app.services.dispatch import run_blocking, send_function
 from app.services.workers import DeskWorkers
 from app.ui.bond_pill import BondPill
-from app.ui.pill import FN_TEMPLATE, TickerPill
+from app.ui.pill import FN_TEMPLATE, REFRESH_TEMPLATE
+from app.ui.ticker_respond import publish_ticker_pill, refresh_ticker_message
 from app.services import gemini
 
 log = logging.getLogger("market-desk")
@@ -63,6 +64,49 @@ class FunctionButton(
         await send_function(interaction, self.fn, self.symbol)
 
 
+class RefreshButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=REFRESH_TEMPLATE,
+):
+    """Manual IB-style tick — re-quote and flash last-tick direction."""
+
+    def __init__(self, symbol: str = "AAPL") -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Refresh",
+                style=discord.ButtonStyle.success,
+                custom_id=f"md:ref:{symbol}",
+            )
+        )
+        self.symbol = symbol
+
+    @classmethod
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Button,
+        match: re.Match[str],
+        /,
+    ):
+        return cls(symbol=match.group("symbol"))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if not interaction.message:
+            return
+        row = db.live_pill_get(interaction.message.id)
+        previous = float(row["last_price"]) if row and row["last_price"] is not None else None
+        try:
+            await refresh_ticker_message(
+                interaction.message,
+                self.symbol,
+                previous_last=previous,
+                extend_live=True,
+            )
+        except Exception as exc:
+            await interaction.followup.send(f"Refresh failed: {exc}", ephemeral=True)
+
+
 class DeskBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -72,7 +116,7 @@ class DeskBot(commands.Bot):
         self.workers: DeskWorkers | None = None
 
     async def setup_hook(self) -> None:
-        self.add_dynamic_items(FunctionButton)
+        self.add_dynamic_items(FunctionButton, RefreshButton)
         for ext in COGS:
             await self.load_extension(ext)
         # Guild sync = instant in listed servers; global sync covers any other invites.
@@ -178,7 +222,7 @@ class DeskBot(commands.Bot):
                 async with message.channel.typing():
                     sec = await run_blocking(get_security, symbol)
                 db.set_last_ticker(message.guild.id, message.channel.id, sec.yahoo)
-                await message.channel.send(view=TickerPill(sec))
+                await publish_ticker_pill(message.channel, sec)
             except Exception as exc:
                 log.info("quote failed for %s: %s", symbol, exc)
 

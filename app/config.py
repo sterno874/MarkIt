@@ -45,3 +45,8 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "").strip()
 
 MORNING_HHMM = os.environ.get("MORNING_HHMM", "08:00").strip()
 CLOSE_HHMM = os.environ.get("CLOSE_HHMM", "16:15").strip()
+
+# Live ticker pills — IB-style auto-refresh while the card is "hot".
+LIVE_PILL_INTERVAL_SEC = int(os.environ.get("LIVE_PILL_INTERVAL_SEC", "20"))
+LIVE_PILL_TTL_SEC = int(os.environ.get("LIVE_PILL_TTL_SEC", "720"))  # 12 minutes
+LIVE_PILL_MAX = int(os.environ.get("LIVE_PILL_MAX", "40"))

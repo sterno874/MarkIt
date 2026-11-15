@@ -8,12 +8,13 @@ import discord
 from discord.ext import tasks
 
 from app import format as fmt
-from app.config import CLOSE_HHMM, MORNING_HHMM, TZ
+from app.config import CLOSE_HHMM, LIVE_PILL_INTERVAL_SEC, MORNING_HHMM, TZ
 from app.cogs.desk import build_brief
 from app.db import db
 from app.market import filings, statements
 from app.market.quotes import get_security
 from app.services.dispatch import run_blocking
+from app.ui.ticker_respond import refresh_ticker_message
 
 log = logging.getLogger("market-desk.workers")
 
@@ -21,14 +22,18 @@ log = logging.getLogger("market-desk.workers")
 class DeskWorkers:
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
+        # Rebuild the live-pill loop with configured interval.
+        self.poll_live_pills.change_interval(seconds=max(10, LIVE_PILL_INTERVAL_SEC))
 
     def start(self) -> None:
         self.poll_alerts.start()
         self.poll_briefs.start()
+        self.poll_live_pills.start()
 
     def stop(self) -> None:
         self.poll_alerts.cancel()
         self.poll_briefs.cancel()
+        self.poll_live_pills.cancel()
 
     @tasks.loop(seconds=60)
     async def poll_alerts(self) -> None:
@@ -73,6 +78,48 @@ class DeskWorkers:
 
     @poll_briefs.before_loop
     async def _wait_ready_briefs(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=20)
+    async def poll_live_pills(self) -> None:
+        """IB-style ticking — refresh hot quote cards in place."""
+        rows = db.live_pills_active()
+        if not rows:
+            return
+        # Bound work per tick so Yahoo + Discord stay healthy.
+        for row in rows[:25]:
+            try:
+                channel = self.bot.get_channel(int(row["channel_id"]))
+                if channel is None:
+                    try:
+                        channel = await self.bot.fetch_channel(int(row["channel_id"]))
+                    except discord.HTTPException:
+                        db.live_pill_remove(int(row["message_id"]))
+                        continue
+                if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+                    db.live_pill_remove(int(row["message_id"]))
+                    continue
+                try:
+                    message = await channel.fetch_message(int(row["message_id"]))
+                except discord.NotFound:
+                    db.live_pill_remove(int(row["message_id"]))
+                    continue
+                except discord.HTTPException:
+                    continue
+                previous = (
+                    float(row["last_price"]) if row["last_price"] is not None else None
+                )
+                await refresh_ticker_message(
+                    message,
+                    row["symbol"],
+                    previous_last=previous,
+                    extend_live=False,
+                )
+            except Exception:
+                log.exception("live pill refresh failed for %s", row["message_id"])
+
+    @poll_live_pills.before_loop
+    async def _wait_ready_pills(self) -> None:
         await self.bot.wait_until_ready()
 
     async def _check_alert(self, row) -> None:  # type: ignore[no-untyped-def]

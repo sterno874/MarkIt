@@ -15,7 +15,8 @@ from app.services import gemini, paper_pnl
 from app.services.dispatch import run_blocking, send_function
 from app.services.markit_nl import Intent, resolve_intent
 from app.ui.bond_respond import send_bond_card
-from app.ui.pill import TickerPill, simple_embed
+from app.ui.pill import simple_embed
+from app.ui.ticker_respond import publish_ticker_pill
 
 EXAMPLE_PROMPTS = [
     "show me the chart on AAPL",
@@ -206,7 +207,7 @@ class MarkIt(commands.Cog):
         if action == "quote":
             sec = await run_blocking(get_security, symbol)
             await self._remember(interaction, sec.yahoo)
-            await interaction.followup.send(view=TickerPill(sec))
+            await publish_ticker_pill(interaction, sec)
             return
 
         if action == "financials":

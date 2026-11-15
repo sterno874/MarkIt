@@ -34,7 +34,8 @@ CL=F
 IHRT 8 3/8 May 2027
 ```
 
-The bot posts a **pill** — price, change, and function buttons (GP / DES / FA / CN / …).  
+The bot posts a **pill** — price, day change, and function buttons (GP / DES / FA / CN / …).  
+Pills are **IB-style live**: green/red accent for the day’s performance, auto-tick about every 20s for ~12 minutes, plus a **Refresh** button.  
 Slash fields also **autocomplete** — type a few letters of a ticker or bond and pick from the list.
 
 The channel remembers the last ticker for a few minutes, so `/chart` or `/markit show the chart` reuses it.
