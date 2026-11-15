@@ -14,7 +14,7 @@ from app.security import normalize_symbol
 from app.services import gemini, paper_pnl
 from app.services.dispatch import run_blocking, send_function
 from app.services.markit_nl import Intent, resolve_intent
-from app.ui.bond_pill import BondPill
+from app.ui.bond_respond import send_bond_card
 from app.ui.pill import TickerPill, simple_embed
 
 EXAMPLE_PROMPTS = [
@@ -148,11 +148,21 @@ class MarkIt(commands.Cog):
             return
 
         if action == "bond":
+            import asyncio
+
             query = intent.query or original
-            quote = await resolve_bond(query)
+            try:
+                quote = await asyncio.wait_for(resolve_bond(query), timeout=45)
+            except Exception as exc:
+                await interaction.followup.send(
+                    f"Could not resolve bond `{query}`: {exc}\n"
+                    "_Try a full string like `IHRT 8 3/8 May 2027` or CUSIP `45174HBD8`._",
+                    ephemeral=True,
+                )
+                return
             if interaction.guild_id and interaction.channel_id and quote.cusip:
                 db.set_last_ticker(interaction.guild_id, interaction.channel_id, quote.cusip)
-            await interaction.followup.send(view=BondPill(quote))
+            await send_bond_card(interaction, quote)
             return
 
         if action == "compare":

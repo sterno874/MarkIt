@@ -46,7 +46,7 @@ MONTHS = {
     "DEC": 12,
 }
 
-# IHRT 8 3/8 May 2027  |  IHRT 8.375 05/01/27  |  IHRT 8.375% 5/1/2027
+# IHRT 8 3/8 May 2027  |  IHRT 8.375 05/01/27  |  IHRT 8.375% 5/1/2027  |  … 144A
 BOND_QUERY = re.compile(
     r"""
     ^\s*
@@ -67,6 +67,8 @@ BOND_QUERY = re.compile(
       | (?P<mon_only>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*
         \s+(?P<y3>\d{4}|\d{2})
     )
+    # Optional OpenFIGI / TRACE suffixes (144A, JUN, etc.)
+    (?:\s+[A-Za-z0-9][\w\-/\.]{0,20})*
     \s*$
     """,
     re.IGNORECASE | re.VERBOSE,

@@ -168,6 +168,8 @@ def _openfigi_bond_search(query: str, limit: int = 10) -> list[app_commands.Choi
         import json
         from urllib.request import Request, urlopen
 
+        from app.market.bonds import looks_like_bond_query
+
         payload = json.dumps({"query": query.strip(), "marketSecDes": "Corp"}).encode()
         req = Request(
             "https://api.openfigi.com/v3/search",
@@ -175,21 +177,31 @@ def _openfigi_bond_search(query: str, limit: int = 10) -> list[app_commands.Choi
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
-        with urlopen(req, timeout=2.0) as resp:
+        with urlopen(req, timeout=1.8) as resp:
             data = json.loads(resp.read().decode()).get("data") or []
     except Exception as exc:
         log.debug("openfigi search failed: %s", exc)
         return []
 
     hits: list[app_commands.Choice[str]] = []
-    for row in data[:limit]:
-        ticker = row.get("ticker") or row.get("securityDescription")
-        if not ticker:
+    for row in data[: limit * 3]:
+        # Prefer description/ticker forms our bond parser can resolve.
+        candidates = [
+            row.get("securityDescription"),
+            row.get("ticker"),
+        ]
+        value = None
+        for cand in candidates:
+            if cand and looks_like_bond_query(str(cand)):
+                value = str(cand)
+                break
+        if not value:
             continue
         name = row.get("name") or ""
-        desc = row.get("securityDescription") or ""
-        label = " · ".join(p for p in (name, desc) if p and p != ticker)
-        hits.append(_choice(str(ticker), f"{ticker} — {label}" if label else str(ticker)))
+        label = " · ".join(p for p in (name, value) if p)
+        hits.append(_choice(value, f"{value} — {label}" if name else value))
+        if len(hits) >= limit:
+            break
     return hits
 
 
@@ -225,23 +237,13 @@ async def suggest_bonds(
     if len(cur) >= 2:
         try:
             remote = await asyncio.wait_for(
-                asyncio.to_thread(_openfigi_bond_search, cur, 12),
-                timeout=2.2,
+                asyncio.to_thread(_openfigi_bond_search, cur, 10),
+                timeout=2.0,
             )
             hits.extend(remote)
         except Exception:
             pass
-    # Also allow equity-style CUSIP / ticker fallbacks from Yahoo when useful.
-    if len(cur) >= 2 and " " not in cur:
-        try:
-            hits.extend(
-                await asyncio.wait_for(
-                    asyncio.to_thread(_yahoo_search, cur, 5),
-                    timeout=1.5,
-                )
-            )
-        except Exception:
-            pass
+    # Do NOT mix Yahoo equity hits into /bond — selecting "IHRT" alone fails TRACE parse.
     return _dedupe(hits)
 
 

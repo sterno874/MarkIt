@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -19,8 +22,10 @@ from app.market.quotes import get_many, get_security
 from app.market.sentiment import crypto_fear_greed, stock_fear_greed
 from app.security import normalize_symbol
 from app.services.dispatch import run_blocking, send_function
-from app.ui.bond_pill import BondPill
+from app.ui.bond_respond import send_bond_card
 from app.ui.pill import TickerPill, simple_embed
+
+log = logging.getLogger("market-desk.research")
 
 
 class Research(commands.Cog):
@@ -293,21 +298,39 @@ class Research(commands.Cog):
     )
     async def bond(self, interaction: discord.Interaction, query: str) -> None:
         await self._defer(interaction)
+        log.info("bond resolve start query=%r", query)
         try:
-            quote = await resolve_bond(query)
-        except Exception as exc:
-            await interaction.followup.send(f"Could not resolve bond: {exc}", ephemeral=True)
+            quote = await asyncio.wait_for(resolve_bond(query), timeout=45)
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                "Bond lookup timed out talking to TRACE/OpenFIGI. Try again in a moment, "
+                "or paste a CUSIP (e.g. `45174HBD8`).",
+                ephemeral=True,
+            )
             return
+        except Exception as exc:
+            log.exception("bond resolve failed query=%r", query)
+            await interaction.followup.send(
+                f"Could not resolve bond `{query}`: {exc}\n"
+                "_Tip: pick a full coupon+maturity like `IHRT 8 3/8 May 2027`, not just `IHRT`._",
+                ephemeral=True,
+            )
+            return
+        log.info("bond resolve ok display=%s cusip=%s", quote.display, quote.cusip)
         if interaction.guild_id and interaction.channel_id and quote.cusip:
             db.set_last_ticker(interaction.guild_id, interaction.channel_id, quote.cusip)
-        await interaction.followup.send(view=BondPill(quote))
+        await send_bond_card(interaction, quote)
 
     @app_commands.command(name="quote-smart", description="Auto-detect equity/FX/crypto/future/option/bond")
     async def quote_smart(self, interaction: discord.Interaction, query: str) -> None:
         await self._defer(interaction)
         if looks_like_bond_query(query):
-            quote = await resolve_bond(query)
-            await interaction.followup.send(view=BondPill(quote))
+            try:
+                quote = await asyncio.wait_for(resolve_bond(query), timeout=45)
+            except Exception as exc:
+                await interaction.followup.send(f"Could not resolve bond: {exc}", ephemeral=True)
+                return
+            await send_bond_card(interaction, quote)
             return
         sym = normalize_symbol(query)
         sec = await run_blocking(get_security, sym)
