@@ -1,0 +1,19 @@
+[Unit]
+Description=MarkIt Discord market desk
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/markit/current
+Environment=PYTHONUNBUFFERED=1
+Environment=DATA_DIR=/var/lib/markit/data
+Environment=DATABASE_PATH=/var/lib/markit/data/desk.db
+# DISCORD_TOKEN / GEMINI_API_KEY / SEC_USER_AGENT live here — not in git.
+EnvironmentFile=/etc/markit.env
+ExecStart=/opt/markit/current/.venv/bin/python -m app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,77 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: markit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: uv pip install --system -r requirements.txt
+      - name: Tests
+        run: pytest -q
+      - name: Import smoke
+        run: python -c "from app.bot import DeskBot; print(DeskBot)"
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish to the Oracle VM
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY:-}" || { echo "DEPLOY_SSH_KEY secret is missing"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 129.80.137.103 >> ~/.ssh/known_hosts
+
+          # App code only — data + .venv stay on the box.
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.venv' \
+            --exclude '.env' \
+            --exclude 'data' \
+            --exclude '__pycache__' \
+            --exclude '.pytest_cache' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./ ubuntu@129.80.137.103:/opt/markit/current/
+
+          ssh -i ~/.ssh/deploy_key ubuntu@129.80.137.103 bash -s <<'REMOTE'
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+          cd /opt/markit/current
+          if [[ ! -x "$HOME/.local/bin/uv" ]]; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          uv venv --python 3.13 .venv
+          uv pip install --python .venv/bin/python -r requirements.txt
+          if [[ ! -f /etc/systemd/system/markit.service ]]; then
+            sudo cp deploy/markit.service /etc/systemd/system/markit.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable markit
+          else
+            sudo cp deploy/markit.service /etc/systemd/system/markit.service
+            sudo systemctl daemon-reload
+          fi
+          sudo systemctl restart markit
+          sleep 2
+          systemctl is-active markit
+          REMOTE
