@@ -74,7 +74,18 @@ jobs:
             sudo cp deploy/markit.service /etc/systemd/system/markit.service
             sudo systemctl daemon-reload
           fi
-          sudo systemctl restart markit
-          sleep 2
-          systemctl is-active markit
+          sudo systemctl restart markit || true
+          sleep 3
+          if systemctl is-active --quiet markit; then
+            echo "markit is active"
+          else
+            echo "markit is not active yet — recent logs:"
+            journalctl -u markit -n 40 --no-pager || true
+            tok="$(sudo sed -n 's/^DISCORD_TOKEN=//p' /etc/markit.env | tr -d '[:space:]')"
+            if [[ -z "$tok" ]]; then
+              echo "DISCORD_TOKEN is empty in /etc/markit.env — code is deployed; set the token then: sudo systemctl restart markit"
+              exit 0
+            fi
+            exit 1
+          fi
           REMOTE
