@@ -75,12 +75,19 @@ def holders(symbol: str) -> dict[str, Any]:
     lines = [f"**{sec.yahoo} holders**"]
     if major is not None and not major.empty:
         for idx, row in major.iterrows():
-            lines.append(f"• {idx}: {row.iloc[0]}")
+            label = str(idx)
+            val = row.iloc[0]
+            if isinstance(val, (int, float)) and "percent" in label.lower():
+                lines.append(f"• {label}: {fmt.pct_frac(val)}")
+            elif isinstance(val, (int, float)):
+                lines.append(f"• {label}: {fmt.compact(val)}")
+            else:
+                lines.append(f"• {label}: {val}")
     if institutional is not None and not institutional.empty:
         lines.append("\n**Top institutions**")
         for _, row in institutional.head(5).iterrows():
             lines.append(
-                f"• {row.get('Holder')}: {fmt.pct(row.get('pctHeld'), already_percent=False)} · "
+                f"• {row.get('Holder')}: {fmt.pct_frac(row.get('pctHeld'))} · "
                 f"{fmt.compact(row.get('Shares'))} sh"
             )
     if purchases is not None and not purchases.empty:
@@ -186,7 +193,7 @@ def options_chain(symbol: str, expiry: str | None = None) -> dict[str, Any]:
             out.append(
                 f"`{row['contractSymbol']}` K{fmt.number(row['strike'], 1)} "
                 f"last {fmt.number(row['lastPrice'])} vol {fmt.compact(row['volume'])} "
-                f"OI {fmt.compact(row['openInterest'])} IV {fmt.pct(row['impliedVolatility'])}"
+                f"OI {fmt.compact(row['openInterest'])} IV {fmt.pct_frac(row['impliedVolatility'])}"
             )
         return out
     text = [

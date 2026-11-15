@@ -52,9 +52,9 @@ async def send_function(
             sec = await run_blocking(get_security, symbol)
             text = (
                 f"**{sec.yahoo} dividends**\n"
-                f"Yield {fmt.pct(sec.yield_)}\n"
+                f"Yield {fmt.pct_frac(sec.yield_)}\n"
                 f"Ex-date {fmt.as_date(sec.raw.get('exDividendDate'))}\n"
-                f"Trailing annual yield {fmt.pct(sec.raw.get('trailingAnnualDividendYield'))}"
+                f"Trailing annual yield {fmt.pct_frac(sec.raw.get('trailingAnnualDividendYield'))}"
             )
             await _respond(destination, embed=simple_embed("DVD · Dividends", text), ephemeral=ephemeral)
         elif fn == "opt":
@@ -64,7 +64,7 @@ async def send_function(
             sec = await run_blocking(get_security, symbol)
             text = (
                 f"**{sec.yahoo} short interest**\n"
-                f"Short % of float {fmt.pct(sec.short_percent)}\n"
+                f"Short % of float {fmt.pct_frac(sec.short_percent)}\n"
                 f"Days to cover {fmt.number(sec.days_to_cover)}\n"
                 f"Shares short {fmt.compact(sec.raw.get('sharesShort'))}"
             )

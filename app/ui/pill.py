@@ -92,7 +92,7 @@ def pill_text(
             stats.append(f"P/E `{fmt.number(sec.trailing_pe)}`")
         if sec.yield_ is not None:
             # yield_ is always stored as a fraction (0.003 = 0.3%)
-            stats.append(f"Yield `{fmt.pct(sec.yield_)}`")
+            stats.append(f"Yield `{fmt.pct_frac(sec.yield_)}`")
         stats.append(f"Vol `{fmt.compact(sec.volume)}`")
         stats.append(f"52w `{fmt.number(sec.year_low)}–{fmt.number(sec.year_high)}`")
 

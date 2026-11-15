@@ -49,16 +49,36 @@ def compact(value: Any, digits: int = 2) -> str:
 
 
 def pct(value: Any, already_percent: bool = False, digits: int = 2) -> str:
+    """Format a percentage.
+
+    Args:
+        value: Either a fraction (0.05 = 5%) when ``already_percent=False``,
+            or percent points (5.0 = 5%) when ``already_percent=True``.
+        already_percent: If False, always multiply by 100. Do not guess —
+            Yahoo mixes both conventions and a 1.5 heuristic hid 160% IVs as 1.60%.
+    """
     if value is None:
         return "—"
     try:
         number = float(value)
     except (TypeError, ValueError):
         return "—"
-    if not already_percent and abs(number) <= 1.5:
+    if number != number:  # NaN
+        return "—"
+    if not already_percent:
         number *= 100
     sign = "+" if number > 0 else ""
     return f"{sign}{number:.{digits}f}%"
+
+
+def pct_points(value: Any, digits: int = 2) -> str:
+    """Alias: value is already in percent points (Yahoo day change, surprise %, …)."""
+    return pct(value, already_percent=True, digits=digits)
+
+
+def pct_frac(value: Any, digits: int = 2) -> str:
+    """Alias: value is a fraction (short % of float, IV, trailing yield, …)."""
+    return pct(value, already_percent=False, digits=digits)
 
 
 def signed(value: Any, digits: int = 2) -> str:

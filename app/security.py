@@ -385,6 +385,7 @@ def resolve(symbol: str) -> Security:
         industry=info.get("industry"),
         website=info.get("website"),
         summary=info.get("longBusinessSummary") or info.get("description"),
+        # Yahoo shortPercentOfFloat is a fraction (0.01 = 1%).
         short_percent=_float(info.get("shortPercentOfFloat")),
         days_to_cover=_float(info.get("shortRatio")),
         bid=_float(info.get("bid")),
