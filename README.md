@@ -361,6 +361,16 @@ deploy/               systemd unit + host bootstrap
 
 ---
 
+## Contributing
+
+`main` is protected:
+
+- **Others** must open a **pull request** (no direct pushes to `main`)
+- **Repo admins** (Matt) can still push straight to `main` for hotfixes / deploys
+- Force-pushes to `main` are blocked
+
+Fork → branch → PR is the default path for community changes.
+
 ## License / sharing
 
 Built for private investing communities. Share the repo, fork it, or invite the hosted bot — whatever fits your desk.
