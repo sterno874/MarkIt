@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.config import GUILD_ID
+from app.config import GUILD_IDS
 from app.db import db
 from app.market.bonds import looks_like_bond_query, resolve_bond
 from app.market.quotes import get_security
@@ -74,14 +74,15 @@ class DeskBot(commands.Bot):
         self.add_dynamic_items(FunctionButton)
         for ext in COGS:
             await self.load_extension(ext)
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            log.info("Synced %s guild commands to %s", len(synced), GUILD_ID)
-        else:
-            synced = await self.tree.sync()
-            log.info("Synced %s global commands", len(synced))
+        # Guild sync = instant in listed servers; global sync covers any other invites.
+        if GUILD_IDS:
+            for gid in GUILD_IDS:
+                guild = discord.Object(id=gid)
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                log.info("Synced %s guild commands to %s", len(synced), gid)
+        synced = await self.tree.sync()
+        log.info("Synced %s global commands", len(synced))
 
         @self.tree.error
         async def on_app_error(interaction: discord.Interaction, error: app_commands.AppCommandError):

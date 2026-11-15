@@ -41,6 +41,6 @@ uv --version
 echo
 echo "Next:"
 echo "  1. Add GitHub Secrets on sterno874/MarkIt: DEPLOY_SSH_KEY, DISCORD_TOKEN,"
-echo "     DISCORD_GUILD_ID (recommended), optional GEMINI_API_KEY / SEC_USER_AGENT"
+echo "     DISCORD_GUILD_ID (one or more ids, comma-separated), optional GEMINI_API_KEY"
 echo "  2. Push to main — CI writes $ENV_FILE, publishes to $APP_ROOT/current, restarts markit"
 echo "  3. Invite the bot to your Discord server (scopes: bot + applications.commands)"

@@ -8,8 +8,28 @@ DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", DATA_DIR / "desk.db"))
 TZ = ZoneInfo(os.environ.get("TZ", "America/New_York"))
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "").strip()
-_guild = os.environ.get("DISCORD_GUILD_ID", "").strip()
-GUILD_ID = int(_guild) if _guild else None
+
+
+def _parse_guild_ids(raw: str) -> list[int]:
+    """Accept one id or a comma/space-separated list: `123,456` or `123 456`."""
+    ids: list[int] = []
+    seen: set[int] = set()
+    for part in raw.replace(",", " ").split():
+        part = part.strip()
+        if not part:
+            continue
+        gid = int(part)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        ids.append(gid)
+    return ids
+
+
+# Comma-separated Discord server ids for instant slash-command sync.
+# Example: DISCORD_GUILD_ID=111,222,333
+GUILD_IDS: list[int] = _parse_guild_ids(os.environ.get("DISCORD_GUILD_ID", "").strip())
+GUILD_ID: int | None = GUILD_IDS[0] if GUILD_IDS else None  # first / legacy
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"

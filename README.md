@@ -39,7 +39,7 @@ uv pip install -r requirements.txt
 python -m app
 ```
 
-Set `DISCORD_GUILD_ID` to your server id so slash commands appear immediately.
+Set `DISCORD_GUILD_ID` to one or more server ids (comma-separated) so slash commands appear immediately there.
 
 ## Production (Oracle VM, next to Research Desk)
 
@@ -65,7 +65,7 @@ bash deploy/bootstrap-server.sh
 |---|---|---|
 | `DEPLOY_SSH_KEY` | yes | SSH key for the Oracle VM |
 | `DISCORD_TOKEN` | yes | Bot token |
-| `DISCORD_GUILD_ID` | recommended | Your Discord server id (instant slash sync) |
+| `DISCORD_GUILD_ID` | recommended | One or more server ids, comma-separated (instant slash sync) |
 | `GEMINI_API_KEY` | no | Enables `/ask` |
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
 | `SEC_USER_AGENT` | no | Identify yourself to SEC EDGAR |
