@@ -37,13 +37,38 @@ jobs:
       - name: Publish to the Oracle VM
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: |
           set -euo pipefail
           test -n "${SSH_KEY:-}" || { echo "DEPLOY_SSH_KEY secret is missing"; exit 1; }
+          test -n "${DISCORD_TOKEN:-}" || { echo "DISCORD_TOKEN secret is missing — add it under Settings → Secrets"; exit 1; }
+
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H 129.80.137.103 >> ~/.ssh/known_hosts
+
+          # Build /etc/markit.env from GitHub secrets (source of truth).
+          umask 077
+          {
+            printf 'DISCORD_TOKEN=%s\n' "$DISCORD_TOKEN"
+            printf 'DISCORD_GUILD_ID=%s\n' "${DISCORD_GUILD_ID:-}"
+            printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY:-}"
+            printf 'GEMINI_MODEL=%s\n' "${GEMINI_MODEL:-gemini-3.8-flash}"
+            printf 'SEC_USER_AGENT=%s\n' "${SEC_USER_AGENT:-markit/1.0}"
+            printf 'TZ=America/New_York\n'
+            printf 'MORNING_HHMM=08:00\n'
+            printf 'CLOSE_HHMM=16:15\n'
+            printf 'DATA_DIR=/var/lib/markit/data\n'
+            printf 'DATABASE_PATH=/var/lib/markit/data/desk.db\n'
+          } > /tmp/markit.env
+
+          scp -i ~/.ssh/deploy_key /tmp/markit.env ubuntu@129.80.137.103:/tmp/markit.env.new
+          shred -u /tmp/markit.env || rm -f /tmp/markit.env
 
           # App code only — data + .venv stay on the box.
           rsync -az --delete \
@@ -60,6 +85,10 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
           cd /opt/markit/current
+
+          sudo install -m 600 -o root -g root /tmp/markit.env.new /etc/markit.env
+          rm -f /tmp/markit.env.new
+
           if [[ ! -x "$HOME/.local/bin/uv" ]]; then
             curl -LsSf https://astral.sh/uv/install.sh | sh
             export PATH="$HOME/.local/bin:$PATH"
@@ -67,26 +96,16 @@ jobs:
           uv venv --python 3.13 --clear .venv
           uv pip install --python .venv/bin/python -r requirements.txt
 
-          if [[ ! -f /etc/systemd/system/markit.service ]]; then
-            sudo cp deploy/markit.service /etc/systemd/system/markit.service
-            sudo systemctl daemon-reload
-            sudo systemctl enable markit
-          else
-            sudo cp deploy/markit.service /etc/systemd/system/markit.service
-            sudo systemctl daemon-reload
-          fi
-          sudo systemctl restart markit || true
+          sudo cp deploy/markit.service /etc/systemd/system/markit.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable markit
+          sudo systemctl restart markit
           sleep 3
           if systemctl is-active --quiet markit; then
             echo "markit is active"
           else
-            echo "markit is not active yet — recent logs:"
-            journalctl -u markit -n 40 --no-pager || true
-            tok="$(sudo sed -n 's/^DISCORD_TOKEN=//p' /etc/markit.env | tr -d '[:space:]')"
-            if [[ -z "$tok" ]]; then
-              echo "DISCORD_TOKEN is empty in /etc/markit.env — code is deployed; set the token then: sudo systemctl restart markit"
-              exit 0
-            fi
+            echo "markit failed to start — recent logs:"
+            journalctl -u markit -n 60 --no-pager || true
             exit 1
           fi
           REMOTE

@@ -10,6 +10,7 @@ ENV_FILE=/etc/markit.env
 sudo mkdir -p "$APP_ROOT" "$DATA_ROOT/data/tickets"
 sudo chown -R ubuntu:ubuntu "$APP_ROOT" "$DATA_ROOT"
 
+# Placeholder only — CI overwrites this from GitHub Secrets on every main deploy.
 if [[ ! -f "$ENV_FILE" ]]; then
   sudo tee "$ENV_FILE" >/dev/null <<'EOF'
 DISCORD_TOKEN=
@@ -20,12 +21,14 @@ SEC_USER_AGENT=markit/1.0 (you@example.com)
 TZ=America/New_York
 MORNING_HHMM=08:00
 CLOSE_HHMM=16:15
+DATA_DIR=/var/lib/markit/data
+DATABASE_PATH=/var/lib/markit/data/desk.db
 EOF
   sudo chmod 600 "$ENV_FILE"
   sudo chown root:root "$ENV_FILE"
-  echo "Created $ENV_FILE — edit it and paste DISCORD_TOKEN before starting the service."
+  echo "Created placeholder $ENV_FILE — CI will overwrite it from GitHub Secrets."
 else
-  echo "$ENV_FILE already exists — left untouched."
+  echo "$ENV_FILE already exists — CI will overwrite it on the next main deploy."
 fi
 
 # uv installs a modern CPython under ~/.local — system python stays 3.8.
@@ -37,7 +40,7 @@ uv --version
 
 echo
 echo "Next:"
-echo "  1. sudo nano $ENV_FILE   # set DISCORD_TOKEN (+ optional GEMINI_API_KEY)"
-echo "  2. Push to main on sterno874/MarkIt — CI publishes to $APP_ROOT/current"
-echo "  3. Or manually: rsync the app tree, then: uv venv --python 3.13 .venv && uv pip install -r requirements.txt"
-echo "  4. sudo cp deploy/markit.service /etc/systemd/system/ && sudo systemctl enable --now markit"
+echo "  1. Add GitHub Secrets on sterno874/MarkIt: DEPLOY_SSH_KEY, DISCORD_TOKEN,"
+echo "     DISCORD_GUILD_ID (recommended), optional GEMINI_API_KEY / SEC_USER_AGENT"
+echo "  2. Push to main — CI writes $ENV_FILE, publishes to $APP_ROOT/current, restarts markit"
+echo "  3. Invite the bot to your Discord server (scopes: bot + applications.commands)"

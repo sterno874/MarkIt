@@ -50,21 +50,27 @@ Host: same box as Research Desk (`129.80.137.103`)
 |---|---|
 | `/opt/markit/current` | App code (rsync’d on every `main` push) |
 | `/var/lib/markit/data` | SQLite + bug ticket JSON (survives deploys) |
-| `/etc/markit.env` | Secrets (`DISCORD_TOKEN`, optional Gemini key) |
+| `/etc/markit.env` | Written by CI from GitHub Secrets on each deploy |
 | `markit.service` | systemd unit |
 
 **One-time on the VM**
 
 ```bash
-# from a checkout, or copy deploy/bootstrap-server.sh up
 bash deploy/bootstrap-server.sh
-sudo nano /etc/markit.env   # paste DISCORD_TOKEN
 ```
 
-**GitHub**
+**GitHub Secrets** (Settings → Secrets and variables → Actions)
 
-1. Add repository secret `DEPLOY_SSH_KEY` (same private key Research Desk already uses).
-2. Push to `main` → Actions runs pytest, rsyncs to `/opt/markit/current`, recreates the 3.13 venv with `uv`, restarts `markit`.
+| Secret | Required | Purpose |
+|---|---|---|
+| `DEPLOY_SSH_KEY` | yes | SSH key for the Oracle VM |
+| `DISCORD_TOKEN` | yes | Bot token |
+| `DISCORD_GUILD_ID` | recommended | Your Discord server id (instant slash sync) |
+| `GEMINI_API_KEY` | no | Enables `/ask` |
+| `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
+| `SEC_USER_AGENT` | no | Identify yourself to SEC EDGAR |
+
+Push to `main` → Actions runs pytest, writes `/etc/markit.env` from those secrets, rsyncs code, recreates the 3.13 venv with `uv`, restarts `markit`.
 
 The VM’s system Python is 3.8; production always runs the uv-managed 3.13 venv.
 
