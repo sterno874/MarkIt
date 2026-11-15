@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.autocomplete import suggest_symbol_list, suggest_symbols
 from app.db import db
 from app.security import normalize_symbol
 from app.ui.pill import simple_embed
@@ -90,4 +91,7 @@ class Watchlist(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Watchlist(bot))
+    cog = Watchlist(bot)
+    await bot.add_cog(cog)
+    cog.watch.autocomplete("tickers")(suggest_symbol_list)
+    cog.unwatch.autocomplete("ticker")(suggest_symbols)

@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from app import format as fmt
+from app.autocomplete import attach_symbol_autocomplete
 from app.db import db
 from app.market.quotes import get_security
 from app.security import normalize_symbol
@@ -118,4 +119,6 @@ class Ideas(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Ideas(bot))
+    cog = Ideas(bot)
+    await bot.add_cog(cog)
+    attach_symbol_autocomplete(cog.idea, "symbol")

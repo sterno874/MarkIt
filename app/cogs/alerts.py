@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.autocomplete import attach_symbol_autocomplete
 from app.config import TZ
 from app.db import db
 from app.security import normalize_symbol
@@ -216,4 +217,16 @@ def _parse_when(text: str) -> datetime:
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Alerts(bot))
+    cog = Alerts(bot)
+    await bot.add_cog(cog)
+    for cmd in (
+        cog.alert_price,
+        cog.alert_percent,
+        cog.alert_trailing,
+        cog.alert_date,
+        cog.alert_insider,
+        cog.alert_filing,
+        cog.alert_earnings,
+        cog.alert_dividend,
+    ):
+        attach_symbol_autocomplete(cmd, "symbol")

@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.autocomplete import suggest_bug_commands
 from app.db import db
 from app.services import gemini
 from app.ui.pill import simple_embed
@@ -291,4 +292,7 @@ class Bugs(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Bugs(bot))
+    cog = Bugs(bot)
+    await bot.add_cog(cog)
+    cog.bug.autocomplete("command")(suggest_bug_commands)
+    cog.report_bug.autocomplete("command")(suggest_bug_commands)

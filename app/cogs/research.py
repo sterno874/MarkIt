@@ -4,6 +4,14 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.autocomplete import (
+    attach_symbol_autocomplete,
+    suggest_bonds,
+    suggest_periods,
+    suggest_smart_query,
+    suggest_statements,
+    suggest_symbol_list,
+)
 from app.db import db
 from app.market import charts, congress, filings, news, statements
 from app.market.bonds import looks_like_bond_query, resolve_bond
@@ -307,5 +315,48 @@ class Research(commands.Cog):
         await interaction.followup.send(view=TickerPill(sec))
 
 
+def _wire_autocomplete(cog: Research) -> None:
+    symbol_cmds = [
+        cog.quote,
+        cog.des,
+        cog.chart,
+        cog.gp,
+        cog.financials,
+        cog.fa,
+        cog.news_cmd,
+        cog.cn,
+        cog.holders,
+        cog.phdc,
+        cog.analysts,
+        cog.anr,
+        cog.earnings,
+        cog.ern,
+        cog.dividends,
+        cog.dvd,
+        cog.options,
+        cog.opt,
+        cog.short,
+        cog.filings_cmd,
+        cog.sec,
+        cog.congress_cmd,
+    ]
+    for cmd in symbol_cmds:
+        attach_symbol_autocomplete(cmd, "symbol")
+
+    for cmd in (cog.chart, cog.gp, cog.compare, cog.rv):
+        cmd.autocomplete("period")(suggest_periods)
+
+    for cmd in (cog.financials, cog.fa):
+        cmd.autocomplete("statement")(suggest_statements)
+
+    for cmd in (cog.compare, cog.rv, cog.heatmap, cog.hmap):
+        cmd.autocomplete("symbols")(suggest_symbol_list)
+
+    cog.bond.autocomplete("query")(suggest_bonds)
+    cog.quote_smart.autocomplete("query")(suggest_smart_query)
+
+
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Research(bot))
+    cog = Research(bot)
+    await bot.add_cog(cog)
+    _wire_autocomplete(cog)
