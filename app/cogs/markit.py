@@ -4,13 +4,14 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app import format as fmt
 from app.db import db
 from app.market import charts, statements
 from app.market.bonds import resolve_bond
 from app.market.quotes import get_many, get_security
 from app.market.sentiment import crypto_fear_greed, stock_fear_greed
 from app.security import normalize_symbol
-from app.services import gemini
+from app.services import gemini, paper_pnl
 from app.services.dispatch import run_blocking, send_function
 from app.services.markit_nl import Intent, resolve_intent
 from app.ui.bond_pill import BondPill
@@ -20,11 +21,15 @@ EXAMPLE_PROMPTS = [
     "show me the chart on AAPL",
     "news for NVDA",
     "quote BTC",
-    "earnings on MSFT",
+    "paper buy 10 AAPL",
+    "paper short NVDA",
+    "my pnl",
+    "server pnl",
+    "leaderboard",
+    "show open positions",
     "compare AAPL and GOOGL over a year",
     "IHRT 8 3/8 May 2027",
     "fear and greed",
-    "filings for TSLA",
 ]
 
 
@@ -86,13 +91,17 @@ class MarkIt(commands.Cog):
                     "Just say what you want:\n"
                     "• `show me the chart on AAPL`\n"
                     "• `news for NVDA`\n"
-                    "• `quote BTC`\n"
+                    "• `paper buy 10 AAPL` · `my pnl` · `leaderboard` · `server pnl`\n"
                     "• `compare AAPL MSFT over a year`\n"
                     "• `IHRT 8 3/8 May 2027`\n"
                     "• `fear and greed`\n\n"
                     "Or use the classic slash commands — `/help topic:commands`.",
                 )
             )
+            return
+
+        if action.startswith("paper_"):
+            await self._execute_paper(interaction, intent)
             return
 
         if action == "ask":
@@ -218,6 +227,137 @@ class MarkIt(commands.Cog):
 
         await interaction.followup.send(
             f"Not sure how to handle `{action}`. Try `/help` or rephrase.",
+            ephemeral=True,
+        )
+
+    async def _execute_paper(
+        self,
+        interaction: discord.Interaction,
+        intent: Intent,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.followup.send("Paper trading is server-only.", ephemeral=True)
+            return
+
+        action = intent.action
+        guild_id = interaction.guild.id
+
+        if action == "paper_leaderboard":
+            book = await run_blocking(paper_pnl.build_server_book, guild_id)
+            await interaction.followup.send(
+                embed=simple_embed("Paper leaderboard", paper_pnl.format_leaderboard(book))
+            )
+            return
+
+        if action == "paper_server":
+            book = await run_blocking(paper_pnl.build_server_book, guild_id)
+            await interaction.followup.send(
+                embed=simple_embed("Server paper PnL", paper_pnl.format_server_summary(book))
+            )
+            return
+
+        if action == "paper_pnl":
+            uid = intent.trader_mention or interaction.user.id
+            book = await run_blocking(paper_pnl.build_trader_book, guild_id, uid)
+            member = interaction.guild.get_member(uid)
+            name = member.display_name if member else str(uid)
+            await interaction.followup.send(
+                embed=simple_embed(
+                    f"Paper PnL · {name}",
+                    paper_pnl.format_trader(book, include_history=True, guild_id=guild_id),
+                )
+            )
+            return
+
+        if action == "paper_positions":
+            if intent.server_wide:
+                book = await run_blocking(paper_pnl.build_server_book, guild_id)
+                text = paper_pnl.format_positions(
+                    book.open_positions, title="Server open positions"
+                )
+            else:
+                uid = intent.trader_mention or interaction.user.id
+                tbook = await run_blocking(paper_pnl.build_trader_book, guild_id, uid)
+                member = interaction.guild.get_member(uid)
+                name = member.display_name if member else str(uid)
+                text = paper_pnl.format_positions(tbook.positions, title=f"Open · {name}")
+            await interaction.followup.send(embed=simple_embed("Paper positions", text))
+            return
+
+        if action == "paper_close":
+            if intent.position_id is None:
+                await interaction.followup.send(
+                    "Which position? e.g. `close position #3`",
+                    ephemeral=True,
+                )
+                return
+            row = db.paper_get(intent.position_id, guild_id)
+            if not row:
+                await interaction.followup.send("Position not found.", ephemeral=True)
+                return
+            is_owner = row["user_id"] == interaction.user.id
+            is_mod = isinstance(interaction.user, discord.Member) and (
+                interaction.user.guild_permissions.manage_messages
+            )
+            if not is_owner and not is_mod:
+                await interaction.followup.send(
+                    "Only the trader (or a mod) can close that position.",
+                    ephemeral=True,
+                )
+                return
+            sec = await run_blocking(get_security, row["symbol"])
+            if sec.last is None:
+                await interaction.followup.send("No last price to mark the close.", ephemeral=True)
+                return
+            closed = db.paper_close(
+                intent.position_id,
+                interaction.user.id,
+                exit_price=float(sec.last),
+                allow_any=is_mod and not is_owner,
+            )
+            if not closed:
+                await interaction.followup.send("Could not close.", ephemeral=True)
+                return
+            await interaction.followup.send(
+                embed=simple_embed(
+                    f"Closed paper #{intent.position_id}",
+                    f"<@{closed['user_id']}> {closed['side']} `{closed['symbol']}` "
+                    f"x{closed['qty']} {fmt.number(closed['entry'])}→{fmt.number(closed['exit'])}\n"
+                    f"Realized **{fmt.money(closed['pnl_dollars'])}** "
+                    f"({fmt.pct(closed['pnl_pct'], already_percent=True)})",
+                )
+            )
+            return
+
+        if action in {"paper_buy", "paper_sell"}:
+            if not intent.symbol:
+                await interaction.followup.send(
+                    "Which ticker? e.g. `paper buy 10 AAPL`",
+                    ephemeral=True,
+                )
+                return
+            sym = normalize_symbol(intent.symbol)
+            sec = await run_blocking(get_security, sym)
+            if sec.last is None:
+                await interaction.followup.send("No last price.", ephemeral=True)
+                return
+            side = "long" if action == "paper_buy" else "short"
+            qty = intent.qty if intent.qty > 0 else 1.0
+            pid = db.paper_open(
+                guild_id, interaction.user.id, sym, side, qty, sec.last
+            )
+            await self._remember(interaction, sym)
+            await interaction.followup.send(
+                embed=simple_embed(
+                    f"Paper #{pid} booked",
+                    f"<@{interaction.user.id}> {side} `{sym}` x{qty} @ {fmt.number(sec.last)}\n"
+                    "Attributed to your book · try `my pnl` or `leaderboard`",
+                )
+            )
+            return
+
+        await interaction.followup.send(
+            f"Unknown paper action `{action}`.",
             ephemeral=True,
         )
 

@@ -107,7 +107,25 @@ class Database:
                     side TEXT NOT NULL,
                     qty REAL NOT NULL,
                     entry REAL NOT NULL,
+                    note TEXT,
                     created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS paper_closed (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    qty REAL NOT NULL,
+                    entry REAL NOT NULL,
+                    exit REAL NOT NULL,
+                    pnl_dollars REAL NOT NULL,
+                    pnl_pct REAL NOT NULL,
+                    note TEXT,
+                    opened_at TEXT,
+                    closed_at TEXT NOT NULL,
+                    position_id INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS bug_tickets (
@@ -142,6 +160,14 @@ class Database:
             )
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             (DATA_DIR / "tickets").mkdir(parents=True, exist_ok=True)
+            self._ensure_column(conn, "paper_positions", "note", "TEXT")
+
+    def _ensure_column(
+        self, conn: sqlite3.Connection, table: str, column: str, decl: str
+    ) -> None:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ---- settings ----
     def get_setting(self, guild_id: int, key: str, default: str | None = None) -> str | None:
@@ -367,19 +393,39 @@ class Database:
             conn.execute("UPDATE ideas SET message_id = ? WHERE id = ?", (message_id, idea_id))
 
     # ---- paper ----
-    def paper_open(self, guild_id: int, user_id: int, symbol: str, side: str, qty: float, entry: float) -> int:
+    def paper_open(
+        self,
+        guild_id: int,
+        user_id: int,
+        symbol: str,
+        side: str,
+        qty: float,
+        entry: float,
+        note: str | None = None,
+    ) -> int:
         with self.connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO paper_positions(guild_id, user_id, symbol, side, qty, entry, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO paper_positions(guild_id, user_id, symbol, side, qty, entry, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (guild_id, user_id, symbol.upper(), side, qty, entry, utcnow()),
+                (guild_id, user_id, symbol.upper(), side, qty, entry, note, utcnow()),
             )
             return int(cur.lastrowid)
 
-    def paper_list(self, guild_id: int, user_id: int) -> list[sqlite3.Row]:
+    def paper_list(
+        self,
+        guild_id: int,
+        user_id: int | None = None,
+    ) -> list[sqlite3.Row]:
         with self.connect() as conn:
+            if user_id is None:
+                return list(
+                    conn.execute(
+                        "SELECT * FROM paper_positions WHERE guild_id = ? ORDER BY user_id, id",
+                        (guild_id,),
+                    )
+                )
             return list(
                 conn.execute(
                     "SELECT * FROM paper_positions WHERE guild_id = ? AND user_id = ? ORDER BY id",
@@ -387,15 +433,144 @@ class Database:
                 )
             )
 
-    def paper_close(self, position_id: int, user_id: int) -> sqlite3.Row | None:
+    def paper_get(self, position_id: int, guild_id: int | None = None) -> sqlite3.Row | None:
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM paper_positions WHERE id = ? AND user_id = ?",
-                (position_id, user_id),
+            if guild_id is None:
+                return conn.execute(
+                    "SELECT * FROM paper_positions WHERE id = ?",
+                    (position_id,),
+                ).fetchone()
+            return conn.execute(
+                "SELECT * FROM paper_positions WHERE id = ? AND guild_id = ?",
+                (position_id, guild_id),
             ).fetchone()
-            if row:
-                conn.execute("DELETE FROM paper_positions WHERE id = ?", (position_id,))
-            return row
+
+    def paper_close(
+        self,
+        position_id: int,
+        user_id: int,
+        *,
+        exit_price: float,
+        allow_any: bool = False,
+    ) -> sqlite3.Row | None:
+        """Close an open position and book realized PnL into paper_closed."""
+        with self.connect() as conn:
+            if allow_any:
+                row = conn.execute(
+                    "SELECT * FROM paper_positions WHERE id = ?",
+                    (position_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM paper_positions WHERE id = ? AND user_id = ?",
+                    (position_id, user_id),
+                ).fetchone()
+            if not row:
+                return None
+            entry = float(row["entry"])
+            qty = float(row["qty"])
+            if row["side"] == "long":
+                pnl_dollars = (exit_price - entry) * qty
+                pnl_pct = (exit_price - entry) / entry * 100 if entry else 0.0
+            else:
+                pnl_dollars = (entry - exit_price) * qty
+                pnl_pct = (entry - exit_price) / entry * 100 if entry else 0.0
+            closed_at = utcnow()
+            cur = conn.execute(
+                """
+                INSERT INTO paper_closed(
+                    guild_id, user_id, symbol, side, qty, entry, exit,
+                    pnl_dollars, pnl_pct, note, opened_at, closed_at, position_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["guild_id"],
+                    row["user_id"],
+                    row["symbol"],
+                    row["side"],
+                    qty,
+                    entry,
+                    exit_price,
+                    pnl_dollars,
+                    pnl_pct,
+                    row["note"] if "note" in row.keys() else None,
+                    row["created_at"],
+                    closed_at,
+                    row["id"],
+                ),
+            )
+            conn.execute("DELETE FROM paper_positions WHERE id = ?", (position_id,))
+            closed = conn.execute(
+                "SELECT * FROM paper_closed WHERE id = ?",
+                (cur.lastrowid,),
+            ).fetchone()
+            return closed
+
+    def paper_closed_list(
+        self,
+        guild_id: int,
+        user_id: int | None = None,
+        *,
+        limit: int = 50,
+        symbol: str | None = None,
+    ) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            clauses = ["guild_id = ?"]
+            args: list[Any] = [guild_id]
+            if user_id is not None:
+                clauses.append("user_id = ?")
+                args.append(user_id)
+            if symbol:
+                clauses.append("symbol = ?")
+                args.append(symbol.upper())
+            args.append(limit)
+            sql = (
+                f"SELECT * FROM paper_closed WHERE {' AND '.join(clauses)} "
+                "ORDER BY closed_at DESC LIMIT ?"
+            )
+            return list(conn.execute(sql, args))
+
+    def paper_trader_ids(self, guild_id: int) -> list[int]:
+        with self.connect() as conn:
+            open_ids = {
+                int(r["user_id"])
+                for r in conn.execute(
+                    "SELECT DISTINCT user_id FROM paper_positions WHERE guild_id = ?",
+                    (guild_id,),
+                )
+            }
+            closed_ids = {
+                int(r["user_id"])
+                for r in conn.execute(
+                    "SELECT DISTINCT user_id FROM paper_closed WHERE guild_id = ?",
+                    (guild_id,),
+                )
+            }
+        return sorted(open_ids | closed_ids)
+
+    def paper_realized_by_user(self, guild_id: int) -> dict[int, float]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, COALESCE(SUM(pnl_dollars), 0) AS realized
+                FROM paper_closed WHERE guild_id = ?
+                GROUP BY user_id
+                """,
+                (guild_id,),
+            )
+            return {int(r["user_id"]): float(r["realized"]) for r in rows}
+
+    def paper_closed_counts(self, guild_id: int) -> dict[int, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, COUNT(*) AS n
+                FROM paper_closed WHERE guild_id = ?
+                GROUP BY user_id
+                """,
+                (guild_id,),
+            )
+            return {int(r["user_id"]): int(r["n"]) for r in rows}
 
     # ---- bugs ----
     def bug_create(

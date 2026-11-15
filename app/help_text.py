@@ -103,13 +103,30 @@ Server watchlist feeds the morning/close briefs and `/heatmap`.
 Creates a card in-channel so the desk can track the thesis without a spreadsheet.
 """.strip(),
     "desk": """
-## Desk rhythm
+## Desk rhythm + paper PnL
 
-`/brief morning` · `/brief close` — indices, rates, watchlist, next earnings
+`/brief morning` · `/brief close` — indices, rates, watchlist
 `/schedule channel:#markets morning:True close:True` — auto-post
-`/board` — refreshable quote board for the server watchlist
-`/paper buy AAPL qty:10` · `/paper positions` · `/paper close id:1`
-`/webhook` — show TradingView webhook URL (if WEBHOOK_PORT is set)
+`/board` — server watchlist quote board
+
+### Paper trading (attributed per trader)
+
+```
+/paper action:buy symbol:AAPL qty:10
+/paper action:sell symbol:NVDA qty:5
+/paper action:positions
+/paper action:positions server_wide:True
+/paper action:close position_id:3
+/paper action:pnl
+/paper action:pnl trader:@someone
+/paper action:leaderboard
+/paper action:server
+```
+
+Or via natural language:
+`/markit paper buy 10 AAPL` · `my pnl` · `server pnl` · `leaderboard`
+
+Each fill is attributed to the Discord user who booked it. Leaderboard = realized (closed) + unrealized (open marks).
 """.strip(),
     "ask": """
 ## Natural language (`/markit`) + Gemini (`/ask`)

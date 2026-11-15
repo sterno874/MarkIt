@@ -86,70 +86,208 @@ class Desk(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="paper", description="Paper buy/sell/positions/close")
-    @app_commands.describe(action="buy, sell, positions, or close")
+    @app_commands.command(
+        name="paper",
+        description="Paper trade desk — buy/sell/close + PnL attribution",
+    )
+    @app_commands.describe(
+        action="buy, sell, close, positions, pnl, leaderboard, or server",
+        symbol="Ticker for buy/sell",
+        qty="Share/contract count",
+        position_id="Open position id to close",
+        trader="Whose book to show (pnl / positions)",
+        server_wide="Show everyone's open positions",
+        note="Optional note on the fill",
+    )
     async def paper(
         self,
         interaction: discord.Interaction,
-        action: Literal["buy", "sell", "positions", "close"],
+        action: Literal[
+            "buy", "sell", "close", "positions", "pnl", "leaderboard", "server"
+        ],
         symbol: str | None = None,
         qty: float = 1.0,
         position_id: int | None = None,
+        trader: discord.Member | None = None,
+        server_wide: bool = False,
+        note: str | None = None,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
 
-        if action == "positions":
-            rows = db.paper_list(interaction.guild.id, interaction.user.id)
-            if not rows:
-                await interaction.response.send_message("No open paper positions.", ephemeral=True)
-                return
-            lines = []
-            for r in rows:
-                try:
-                    last = (await run_blocking(get_security, r["symbol"])).last
-                except Exception:
-                    last = None
-                pnl = None
-                if last is not None:
-                    raw = (last - r["entry"]) / r["entry"] * 100
-                    pnl = raw if r["side"] == "long" else -raw
-                lines.append(
-                    f"#{r['id']} {r['side']} `{r['symbol']}` x{r['qty']} @ {fmt.number(r['entry'])} "
-                    f"→ {fmt.number(last)} ({fmt.pct(pnl, already_percent=True)})"
-                )
-            await interaction.response.send_message(
-                embed=simple_embed("Paper positions", "\n".join(lines)),
-                ephemeral=True,
+        from app.services import paper_pnl
+
+        if action == "leaderboard":
+            await interaction.response.defer()
+            book = await run_blocking(paper_pnl.build_server_book, interaction.guild.id)
+            await interaction.followup.send(
+                embed=simple_embed("Paper leaderboard", paper_pnl.format_leaderboard(book))
             )
+            return
+
+        if action == "server":
+            await interaction.response.defer()
+            book = await run_blocking(paper_pnl.build_server_book, interaction.guild.id)
+            await interaction.followup.send(
+                embed=simple_embed("Server paper PnL", paper_pnl.format_server_summary(book))
+            )
+            return
+
+        if action == "pnl":
+            await interaction.response.defer()
+            target = trader or interaction.user
+            book = await run_blocking(
+                paper_pnl.build_trader_book, interaction.guild.id, target.id
+            )
+            await interaction.followup.send(
+                embed=simple_embed(
+                    f"Paper PnL · {target.display_name}",
+                    paper_pnl.format_trader(
+                        book, include_history=True, guild_id=interaction.guild.id
+                    ),
+                )
+            )
+            return
+
+        if action == "positions":
+            await interaction.response.defer(ephemeral=not server_wide and trader is None)
+            if server_wide:
+                book = await run_blocking(paper_pnl.build_server_book, interaction.guild.id)
+                text = paper_pnl.format_positions(
+                    book.open_positions, title="Server open positions"
+                )
+            else:
+                target = trader or interaction.user
+                tbook = await run_blocking(
+                    paper_pnl.build_trader_book, interaction.guild.id, target.id
+                )
+                text = paper_pnl.format_positions(
+                    tbook.positions, title=f"Open · {target.display_name}"
+                )
+            await interaction.followup.send(embed=simple_embed("Paper positions", text))
             return
 
         if action == "close":
             if position_id is None:
-                await interaction.response.send_message("Pass `position_id` to close.", ephemeral=True)
+                await interaction.response.send_message(
+                    "Pass `position_id` to close (see `/paper action:positions`).",
+                    ephemeral=True,
+                )
                 return
-            row = db.paper_close(position_id, interaction.user.id)
+            await interaction.response.defer()
+            row = db.paper_get(position_id, interaction.guild.id)
             if not row:
-                await interaction.response.send_message("Position not found.", ephemeral=True)
+                await interaction.followup.send("Position not found.", ephemeral=True)
                 return
-            await interaction.response.send_message(f"Closed paper #{position_id}.", ephemeral=True)
+            is_owner = row["user_id"] == interaction.user.id
+            is_mod = isinstance(interaction.user, discord.Member) and (
+                interaction.user.guild_permissions.manage_messages
+            )
+            if not is_owner and not is_mod:
+                await interaction.followup.send(
+                    "Only the trader (or a mod) can close that position.",
+                    ephemeral=True,
+                )
+                return
+            try:
+                sec = await run_blocking(get_security, row["symbol"])
+                exit_px = sec.last
+            except Exception:
+                exit_px = None
+            if exit_px is None:
+                await interaction.followup.send("No last price to mark the close.", ephemeral=True)
+                return
+            closed = db.paper_close(
+                position_id,
+                interaction.user.id,
+                exit_price=float(exit_px),
+                allow_any=is_mod and not is_owner,
+            )
+            if not closed:
+                await interaction.followup.send("Could not close position.", ephemeral=True)
+                return
+            await interaction.followup.send(
+                embed=simple_embed(
+                    f"Closed paper #{position_id}",
+                    f"<@{closed['user_id']}> {closed['side']} `{closed['symbol']}` "
+                    f"x{closed['qty']} {fmt.number(closed['entry'])}→{fmt.number(closed['exit'])}\n"
+                    f"Realized **{fmt.money(closed['pnl_dollars'])}** "
+                    f"({fmt.pct(closed['pnl_pct'], already_percent=True)})",
+                )
+            )
             return
 
-        if not symbol:
-            await interaction.response.send_message("Pass a symbol.", ephemeral=True)
+        if action in {"buy", "sell"}:
+            if not symbol:
+                await interaction.response.send_message("Pass a symbol.", ephemeral=True)
+                return
+            await interaction.response.defer()
+            sym = normalize_symbol(symbol)
+            sec = await run_blocking(get_security, sym)
+            if sec.last is None:
+                await interaction.followup.send("No last price.", ephemeral=True)
+                return
+            side = "long" if action == "buy" else "short"
+            pid = db.paper_open(
+                interaction.guild.id,
+                interaction.user.id,
+                sym,
+                side,
+                qty,
+                sec.last,
+                note=note,
+            )
+            await interaction.followup.send(
+                embed=simple_embed(
+                    f"Paper #{pid} booked",
+                    f"<@{interaction.user.id}> {side} `{sym}` x{qty} @ {fmt.number(sec.last)}"
+                    + (f"\n_{note}_" if note else "")
+                    + "\nAttributed to your book · `/paper action:pnl` · `/paper action:leaderboard`",
+                )
+            )
             return
-        await interaction.response.defer(ephemeral=True)
-        sym = normalize_symbol(symbol)
-        sec = await run_blocking(get_security, sym)
-        if sec.last is None:
-            await interaction.followup.send("No last price.", ephemeral=True)
+
+    @app_commands.command(
+        name="leaderboard",
+        description="Paper trading PnL leaderboard for this server",
+    )
+    async def leaderboard(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.", ephemeral=True)
             return
-        side = "long" if action == "buy" else "short"
-        pid = db.paper_open(interaction.guild.id, interaction.user.id, sym, side, qty, sec.last)
+        from app.services import paper_pnl
+
+        await interaction.response.defer()
+        book = await run_blocking(paper_pnl.build_server_book, interaction.guild.id)
         await interaction.followup.send(
-            f"Paper #{pid}: {side} `{sym}` x{qty} @ {fmt.number(sec.last)}",
-            ephemeral=True,
+            embed=simple_embed("Paper leaderboard", paper_pnl.format_leaderboard(book))
+        )
+
+    @app_commands.command(name="pnl", description="Your (or another trader's) paper PnL")
+    @app_commands.describe(trader="Defaults to you")
+    async def pnl_cmd(
+        self,
+        interaction: discord.Interaction,
+        trader: discord.Member | None = None,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.", ephemeral=True)
+            return
+        from app.services import paper_pnl
+
+        await interaction.response.defer()
+        target = trader or interaction.user
+        book = await run_blocking(
+            paper_pnl.build_trader_book, interaction.guild.id, target.id
+        )
+        await interaction.followup.send(
+            embed=simple_embed(
+                f"Paper PnL · {target.display_name}",
+                paper_pnl.format_trader(
+                    book, include_history=True, guild_id=interaction.guild.id
+                ),
+            )
         )
 
 

@@ -135,7 +135,7 @@ Admins can set a shared alerts channel:
 
 The **server** watchlist feeds `/brief`, `/board`, and `/heatmap`.
 
-### Trade ideas & paper
+### Trade ideas & paper PnL
 
 ```
 /idea side:long symbol:ASTS entry:28 stop:24 target:40 note:spectrum thesis
@@ -143,8 +143,32 @@ The **server** watchlist feeds `/brief`, `/board`, and `/heatmap`.
 /idea-close id:3 exit:35
 
 /paper action:buy symbol:AAPL qty:10
+/paper action:sell symbol:NVDA qty:5
 /paper action:positions
+/paper action:positions server_wide:True
 /paper action:close position_id:1
+/paper action:pnl
+/paper action:pnl trader:@someone
+/paper action:leaderboard
+/paper action:server
+/leaderboard
+/pnl
+```
+
+**Attribution:** every paper fill is tagged to the Discord user who booked it.  
+**Server PnL** = sum of all traders’ realized (closed) + unrealized (open marks).  
+**Leaderboard** ranks traders by total attributed PnL.
+
+Natural language:
+
+```
+/markit paper buy 10 AAPL
+/markit paper short NVDA
+/markit my pnl
+/markit server pnl
+/markit leaderboard
+/markit show open positions
+/markit close position #3
 ```
 
 ### Desk briefs

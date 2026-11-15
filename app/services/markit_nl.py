@@ -135,11 +135,84 @@ STOPWORDS = {
     "CHECK",
     "QUICK",
     "QUICKLY",
+    "PAPER",
+    "BOOK",
+    "BUY",
+    "SELL",
+    "LONG",
+    "SHORT",
+    "LEADERBOARD",
+    "PNL",
+    "P&L",
+    "ATTRIBUTION",
+    "POSITIONS",
+    "POSITION",
+    "CLOSE",
+    "CLOSED",
+    "OPEN",
+    "SERVER",
+    "TOTAL",
+    "TRADER",
+    "TRADERS",
+    "SHARES",
+    "SHARE",
+    "UNITS",
 }
 
 # (action, compiled pattern) — first match wins; order = specificity
 ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("help", re.compile(r"\b(help|commands|how (do|to) use)\b", re.I)),
+    (
+        "paper_leaderboard",
+        re.compile(
+            r"\b(leaderboard|standings|who('?s| is) (winning|ahead|up)|rankings?|top\s+traders?)\b",
+            re.I,
+        ),
+    ),
+    (
+        "paper_server",
+        re.compile(
+            r"\b((server|desk|team|our|total)\s+(paper\s+)?(pnl|p&l|profit|performance)|"
+            r"paper\s+server|server\s+book)\b",
+            re.I,
+        ),
+    ),
+    (
+        "paper_pnl",
+        re.compile(
+            r"\b((my|mine|his|her|their)\s+(pnl|p&l|paper)|"
+            r"(pnl|p&l|attribution)\b|"
+            r"how('?s| is) .{0,40}(doing|performing|pnl|p&l))\b",
+            re.I,
+        ),
+    ),
+    (
+        "paper_positions",
+        re.compile(
+            r"\b((paper\s+)?positions|open\s+(paper\s+)?(trades?|books?|positions?)|"
+            r"what('?s| is) open|show\s+(my\s+)?(book|positions))\b",
+            re.I,
+        ),
+    ),
+    (
+        "paper_close",
+        re.compile(r"\b(close|flatten|exit)\s+(paper\s+)?(position\s*)?#?\d+\b", re.I),
+    ),
+    (
+        "paper_sell",
+        re.compile(
+            r"\b((paper\s+)?(sell|short)|book\s+a\s+short|paper\s+short)\b",
+            re.I,
+        ),
+    ),
+    (
+        "paper_buy",
+        re.compile(
+            r"\b((paper\s+)?(buy|long)|book\s+(a\s+)?(long\s+)?|paper\s+trade|"
+            r"add\s+to\s+(my\s+)?(paper\s+)?book)\b",
+            re.I,
+        ),
+    ),
     ("fgi", re.compile(r"\b(fear\s*(&|and)?\s*greed|fgi)\b", re.I)),
     ("heatmap", re.compile(r"\b(heatmap|heat\s*map|movers\s*board)\b", re.I)),
     ("compare", re.compile(r"\b(compare|vs\.?|versus|relative|rv)\b", re.I)),
@@ -167,6 +240,10 @@ class Intent:
     period: str = "6m"
     statement: str = "income"
     query: str | None = None
+    qty: float = 1.0
+    position_id: int | None = None
+    trader_mention: int | None = None  # Discord snowflake from <@id>
+    server_wide: bool = False
     source: str = "local"  # local | gemini | fallback
 
 
@@ -257,6 +334,38 @@ def _detect_action(text: str) -> str | None:
     return None
 
 
+def _extract_qty(text: str) -> float:
+    # "buy 10 AAPL", "paper buy AAPL x5", "book 2.5 NVDA"
+    patterns = [
+        r"\b(?:buy|sell|long|short|book)\s+(\d+(?:\.\d+)?)\s+",
+        r"\bx\s*(\d+(?:\.\d+)?)\b",
+        r"\b(\d+(?:\.\d+)?)\s+(?:shares?|units?)\b",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.I)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                continue
+    return 1.0
+
+
+def _extract_position_id(text: str) -> int | None:
+    m = re.search(r"(?:position\s*)?#\s*(\d+)\b", text, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"\b(?:close|flatten|exit)\s+(?:paper\s+)?(?:position\s+)?(\d+)\b", text, re.I)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _extract_mention(text: str) -> int | None:
+    m = re.search(r"<@!?(\d+)>", text)
+    return int(m.group(1)) if m else None
+
+
 def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
     text = (text or "").strip()
     if not text:
@@ -266,6 +375,12 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
     period = _detect_period(text)
     statement = _detect_statement(text)
     symbols = _extract_symbols(text)
+    qty = _extract_qty(text)
+    position_id = _extract_position_id(text)
+    mention = _extract_mention(text)
+    server_wide = bool(
+        re.search(r"\b(server|everyone|all\s+traders?|desk|team)\b", text, re.I)
+    )
 
     # Bond free-text: keep original query when it looks like a bond string
     from app.market.bonds import looks_like_bond_query
@@ -274,6 +389,25 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
         return Intent(
             action="bond",
             query=text,
+            source="local",
+        )
+
+    # Paper desk — no symbol required for books / leaderboard / pnl
+    if action and action.startswith("paper_"):
+        if action == "paper_buy" and not (symbols or last_ticker):
+            return None
+        if action == "paper_sell" and not (symbols or last_ticker):
+            return None
+        if action == "paper_close" and position_id is None:
+            return None
+        return Intent(
+            action=action,
+            symbol=(symbols[0] if symbols else last_ticker),
+            symbols=symbols,
+            qty=qty,
+            position_id=position_id,
+            trader_mention=mention,
+            server_wide=server_wide,
             source="local",
         )
 
@@ -320,18 +454,26 @@ def parse_with_gemini(text: str, *, last_ticker: str | None = None) -> Intent | 
     prompt = f"""You route Discord Market Desk requests to ONE desk action.
 Return ONLY compact JSON (no markdown) with keys:
   action: one of quote, chart, news, financials, holders, analysts, earnings, dividends,
-          options, short, filings, congress, bond, compare, fgi, heatmap, help, ask
+          options, short, filings, congress, bond, compare, fgi, heatmap, help, ask,
+          paper_buy, paper_sell, paper_close, paper_positions, paper_pnl,
+          paper_leaderboard, paper_server
   symbol: ticker string or null
   symbols: array of tickers (for compare) or []
   period: one of 1d,5d,1m,3m,6m,1y,5y,ytd,max (default 6m)
   statement: income|balance|cashflow (for financials)
   query: original bond string if action=bond, else null
+  qty: number (default 1) for paper_buy/paper_sell
+  position_id: int or null for paper_close
+  trader_mention: Discord user snowflake int or null
+  server_wide: bool
 
 Examples:
-  "show me the chart on aapl" → {{"action":"chart","symbol":"AAPL","symbols":[],"period":"6m","statement":"income","query":null}}
-  "news for NVDA" → {{"action":"news","symbol":"NVDA","symbols":[],"period":"6m","statement":"income","query":null}}
-  "compare AAPL and MSFT over a year" → {{"action":"compare","symbol":null,"symbols":["AAPL","MSFT"],"period":"1y","statement":"income","query":null}}
-  "IHRT 8 3/8 May 2027" → {{"action":"bond","symbol":null,"symbols":[],"period":"6m","statement":"income","query":"IHRT 8 3/8 May 2027"}}
+  "show me the chart on aapl" → {{"action":"chart","symbol":"AAPL","symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":false}}
+  "paper buy 10 AAPL" → {{"action":"paper_buy","symbol":"AAPL","symbols":[],"period":"6m","statement":"income","query":null,"qty":10,"position_id":null,"trader_mention":null,"server_wide":false}}
+  "leaderboard" → {{"action":"paper_leaderboard","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":false}}
+  "server pnl" → {{"action":"paper_server","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":true}}
+  "my pnl" → {{"action":"paper_pnl","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":null,"trader_mention":null,"server_wide":false}}
+  "close position #3" → {{"action":"paper_close","symbol":null,"symbols":[],"period":"6m","statement":"income","query":null,"qty":1,"position_id":3,"trader_mention":null,"server_wide":false}}
 
 Last ticker in channel: {last_ticker or "none"}
 User request: {text}
@@ -370,10 +512,45 @@ User request: {text}
     if statement not in {"income", "balance", "cashflow"}:
         statement = "income"
     query = data.get("query")
+    qty = data.get("qty", 1)
+    try:
+        qty_f = float(qty)
+    except (TypeError, ValueError):
+        qty_f = 1.0
+    position_id = data.get("position_id")
+    try:
+        position_id_i = int(position_id) if position_id is not None else None
+    except (TypeError, ValueError):
+        position_id_i = None
+    trader_mention = data.get("trader_mention")
+    try:
+        trader_mention_i = int(trader_mention) if trader_mention is not None else None
+    except (TypeError, ValueError):
+        trader_mention_i = None
+    server_wide = bool(data.get("server_wide"))
 
+    paper_actions = {
+        "paper_buy",
+        "paper_sell",
+        "paper_close",
+        "paper_positions",
+        "paper_pnl",
+        "paper_leaderboard",
+        "paper_server",
+    }
     if symbol:
         symbol = normalize_symbol(str(symbol))
-    elif last_ticker and action not in {"fgi", "heatmap", "help", "bond", "compare", "ask"}:
+    elif last_ticker and action not in {
+        "fgi",
+        "heatmap",
+        "help",
+        "bond",
+        "compare",
+        "ask",
+        *paper_actions,
+    }:
+        symbol = last_ticker
+    elif last_ticker and action in {"paper_buy", "paper_sell"} and not symbol:
         symbol = last_ticker
 
     norm_symbols = []
@@ -390,6 +567,10 @@ User request: {text}
         period=period,
         statement=statement,
         query=str(query) if query else None,
+        qty=qty_f,
+        position_id=position_id_i,
+        trader_mention=trader_mention_i,
+        server_wide=server_wide,
         source="gemini",
     )
 
