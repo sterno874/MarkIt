@@ -168,21 +168,32 @@ def earnings(symbol: str) -> dict[str, Any]:
 
 
 def options_chain(symbol: str, expiry: str | None = None) -> dict[str, Any]:
+    from datetime import date as _date
+
+    from app.security import nearest_listed_expiry
+
     sec = resolve(symbol)
     underlying = sec.underlying or sec.yahoo
     if sec.is_option:
         underlying = sec.underlying or underlying
+        # Contract pills must open *their* expiry, not the front week.
+        expiry = expiry or sec.expiry
     t = yf.Ticker(underlying)
     expiries = list(t.options or [])
     if not expiries:
         raise ValueError(f"No options listed for {underlying}")
     chosen = expiry or expiries[0]
     if chosen not in expiries:
-        # allow YYYY-MM-DD prefix match
         matches = [e for e in expiries if e.startswith(chosen)]
-        if not matches:
-            raise ValueError(f"Expiry {chosen} not in {expiries[:8]}…")
-        chosen = matches[0]
+        if matches:
+            chosen = matches[0]
+        else:
+            try:
+                chosen = nearest_listed_expiry(
+                    underlying, _date.fromisoformat(chosen[:10])
+                ).isoformat()
+            except Exception as exc:
+                raise ValueError(f"Expiry {expiry} not in {expiries[:8]}…") from exc
     chain = t.option_chain(chosen)
     def top(df: pd.DataFrame, n: int = 5) -> list[str]:
         if df is None or df.empty:

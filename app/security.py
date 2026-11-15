@@ -135,15 +135,13 @@ INDEX_CARET = re.compile(r"^\^[A-Z0-9.\-]+$")
 OCC = re.compile(
     r"^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$"
 )
-# AAPL 275C 11/16/26  or  AAPL 275 Call Nov 16 2026
-OPTION_SHORTHAND = re.compile(
-    r"""
-    ^\s*
-    (?P<root>[A-Za-z.\-]{1,8})
+# AAPL 275C 11/16/26  or  AAPL 275 Call Nov 16 2026  (also embedded in longer asks)
+_OPTION_BODY = r"""
+    (?P<root>[A-Za-z][A-Za-z.\-]{0,7})
     \s+
     (?P<strike>\d+(?:\.\d+)?)
     \s*
-    (?:(?P<side>[CcPp])|(?P<side_word>call|put))
+    (?:(?P<side>[CcPp])|(?P<side_word>calls?|puts?))
     (?:\s+|/)
     (?:
         (?P<m1>\d{1,2})[/-](?P<d1>\d{1,2})[/-](?P<y1>\d{2,4})
@@ -151,10 +149,31 @@ OPTION_SHORTHAND = re.compile(
         \s+(?P<d2>\d{1,2})(?:st|nd|rd|th)?
         (?:\s*,?\s*(?P<y2>\d{2,4}))?
     )
-    \s*$
+"""
+OPTION_SHORTHAND = re.compile(
+    rf"^\s*{_OPTION_BODY}\s*$",
+    re.IGNORECASE | re.VERBOSE,
+)
+OPTION_SHORTHAND_SEARCH = re.compile(_OPTION_BODY, re.IGNORECASE | re.VERBOSE)
+# AAPL Nov 21 360 call  /  AAPL 11/21/26 360C
+OPTION_DATE_FIRST_SEARCH = re.compile(
+    r"""
+    (?P<root>[A-Za-z][A-Za-z.\-]{0,7})
+    \s+
+    (?:
+        (?P<m1>\d{1,2})[/-](?P<d1>\d{1,2})[/-](?P<y1>\d{2,4})
+      | (?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*
+        \s+(?P<d2>\d{1,2})(?:st|nd|rd|th)?
+        (?:\s*,?\s*(?P<y2>\d{2,4}))?
+    )
+    \s+
+    (?P<strike>\d+(?:\.\d+)?)
+    \s*
+    (?:(?P<side>[CcPp])|(?P<side_word>calls?|puts?))
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+OCC_IN_TEXT = re.compile(r"\b([A-Z]{1,6}\d{6}[CP]\d{8})\b")
 TICKER_TOKEN = re.compile(
     r"(?<![A-Za-z0-9])(?:\$)?([A-Za-z]{1,6}(?:[.\-][A-Za-z0-9]{1,6})?|\^[A-Z0-9.\-]{1,12}|[A-Z]{3}/[A-Z]{3}|[A-Z0-9]{1,10}=F|[A-Z]{2,10}-USD)(?![A-Za-z0-9])"
 )
@@ -326,7 +345,25 @@ def normalize_symbol(raw: str) -> str:
     return cleaned
 
 
-def _occ_from_shorthand(match: re.Match[str]) -> str:
+def nearest_listed_expiry(root: str, target: date) -> date:
+    """Snap a requested option date to the nearest Yahoo-listed expiry."""
+    try:
+        expiries = list(yf.Ticker(root).options or [])
+    except Exception:
+        return target
+    if not expiries:
+        return target
+    iso = target.isoformat()
+    if iso in expiries:
+        return target
+    best = min(
+        expiries,
+        key=lambda e: abs((date.fromisoformat(e[:10]) - target).days),
+    )
+    return date.fromisoformat(best[:10])
+
+
+def _occ_from_shorthand(match: re.Match[str], *, snap: bool = True) -> str:
     root = match.group("root").upper().replace(".", "-")
     strike = float(match.group("strike"))
     side_letter = (match.group("side") or match.group("side_word") or "C")[0].upper()
@@ -334,14 +371,47 @@ def _occ_from_shorthand(match: re.Match[str]) -> str:
         month = int(match.group("m1"))
         day = int(match.group("d1"))
         year = int(match.group("y1"))
+        year_explicit = True
     else:
         month = MONTHS[match.group("mon")[:3].upper()]
         day = int(match.group("d2"))
+        year_explicit = bool(match.group("y2"))
         year = int(match.group("y2") or date.today().year)
     if year < 100:
         year += 2000
+    target = date(year, month, day)
+    # "Nov 21" with no year → roll forward if that calendar date already passed.
+    if not year_explicit and target < date.today():
+        target = date(year + 1, month, day)
+    if snap:
+        target = nearest_listed_expiry(root, target)
     strike_int = int(round(strike * 1000))
-    return f"{root}{year % 100:02d}{month:02d}{day:02d}{side_letter}{strike_int:08d}"
+    return (
+        f"{root}{target.year % 100:02d}{target.month:02d}{target.day:02d}"
+        f"{side_letter}{strike_int:08d}"
+    )
+
+
+def extract_option_contracts(text: str) -> list[str]:
+    """Find OCC / shorthand option contracts inside free text."""
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def add(sym: str) -> None:
+        key = sym.upper()
+        if key not in seen:
+            seen.add(key)
+            found.append(sym)
+
+    for m in OCC_IN_TEXT.finditer(text.upper()):
+        add(m.group(1))
+    for pattern in (OPTION_SHORTHAND_SEARCH, OPTION_DATE_FIRST_SEARCH):
+        for m in pattern.finditer(text):
+            try:
+                add(_occ_from_shorthand(m, snap=True))
+            except Exception:
+                continue
+    return found
 
 
 def extract_tickers(text: str, limit: int = 3) -> list[str]:

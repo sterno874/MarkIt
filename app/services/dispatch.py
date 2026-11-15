@@ -21,6 +21,7 @@ async def send_function(
     fn: str,
     symbol: str,
     *,
+    expiry: str | None = None,
     ephemeral: bool = False,
 ) -> None:
     fn = fn.lower()
@@ -58,8 +59,13 @@ async def send_function(
             )
             await _respond(destination, embed=simple_embed("DVD · Dividends", text), ephemeral=ephemeral)
         elif fn == "opt":
-            data = await run_blocking(statements.options_chain, symbol)
-            await _respond(destination, embed=simple_embed("Options", data["text"]), ephemeral=ephemeral)
+            data = await run_blocking(statements.options_chain, symbol, expiry)
+            title = f"Options · {data.get('expiry') or ''}".strip()
+            await _respond(
+                destination,
+                embed=simple_embed(title, data["text"]),
+                ephemeral=ephemeral,
+            )
         elif fn == "short":
             sec = await run_blocking(get_security, symbol)
             text = (

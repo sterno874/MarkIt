@@ -9,8 +9,12 @@ from app import format as fmt
 from app.security import Security
 from app.ui.links import external_links
 
-# custom_id: md:fn:<function>:<SYMBOL>
-FN_TEMPLATE = r"md:fn:(?P<fn>gp|des|fa|cn|phdc|anr|ern|dvd|opt|short):(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
+# custom_id: md:fn:<function>:<SYMBOL>[:YYYY-MM-DD]  (optional expiry for opt/chain)
+FN_TEMPLATE = (
+    r"md:fn:(?P<fn>gp|des|fa|cn|phdc|anr|ern|dvd|opt|short):"
+    r"(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
+    r"(?::(?P<expiry>\d{4}-\d{2}-\d{2}))?"
+)
 # Manual refresh on a live pill
 REFRESH_TEMPLATE = r"md:ref:(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
 # Expand / collapse — state in custom_id: 0=collapsed (button expands), 1=expanded (button collapses)
@@ -206,17 +210,21 @@ def function_buttons(sec: Security) -> list[ui.Button]:
             ]
         )
     elif sec.is_option:
+        under = sec.underlying or symbol
+        chain_id = f"md:fn:opt:{under}"
+        if sec.expiry:
+            chain_id = f"md:fn:opt:{under}:{sec.expiry}"
         buttons.extend(
             [
                 ui.Button(
                     label="Underlying",
                     style=discord.ButtonStyle.secondary,
-                    custom_id=f"md:fn:des:{sec.underlying or symbol}",
+                    custom_id=f"md:fn:des:{under}",
                 ),
                 ui.Button(
                     label="Chain",
                     style=discord.ButtonStyle.secondary,
-                    custom_id=f"md:fn:opt:{sec.underlying or symbol}",
+                    custom_id=chain_id,
                 ),
             ]
         )

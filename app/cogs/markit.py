@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
 
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+log = logging.getLogger("market-desk.markit")
 
 from app import format as fmt
 from app.db import db
@@ -109,6 +112,15 @@ class MarkIt(commands.Cog):
         if ctx.guild_id and ctx.channel_id:
             last = db.get_last_ticker(ctx.guild_id, ctx.channel_id)
         intent = await run_blocking(resolve_intent, request, last_ticker=last)
+        log.info(
+            "intent action=%s symbol=%s expiry=%s period=%s source=%s request=%r",
+            intent.action,
+            intent.symbol,
+            intent.expiry,
+            intent.period,
+            intent.source,
+            request[:160],
+        )
         await self._execute(ctx, intent, request)
 
     async def _remember(self, ctx: DeskCtx, symbol: str) -> None:
@@ -261,7 +273,9 @@ class MarkIt(commands.Cog):
         }
         fn = fn_map.get(action)
         if fn:
-            await send_function(ctx.destination, fn, symbol)
+            await send_function(
+                ctx.destination, fn, symbol, expiry=intent.expiry
+            )
             return
 
         await ctx.send(

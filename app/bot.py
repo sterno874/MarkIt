@@ -33,16 +33,25 @@ class FunctionButton(
     discord.ui.DynamicItem[discord.ui.Button],
     template=FN_TEMPLATE,
 ):
-    def __init__(self, fn: str = "gp", symbol: str = "AAPL") -> None:
+    def __init__(
+        self,
+        fn: str = "gp",
+        symbol: str = "AAPL",
+        expiry: str | None = None,
+    ) -> None:
+        custom_id = f"md:fn:{fn}:{symbol}"
+        if expiry:
+            custom_id = f"{custom_id}:{expiry}"
         super().__init__(
             discord.ui.Button(
                 label=fn.upper(),
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"md:fn:{fn}:{symbol}",
+                custom_id=custom_id,
             )
         )
         self.fn = fn
         self.symbol = symbol
+        self.expiry = expiry
 
     @classmethod
     async def from_custom_id(
@@ -52,12 +61,18 @@ class FunctionButton(
         match: re.Match[str],
         /,
     ):
-        return cls(fn=match.group("fn"), symbol=match.group("symbol"))
+        return cls(
+            fn=match.group("fn"),
+            symbol=match.group("symbol"),
+            expiry=match.groupdict().get("expiry"),
+        )
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         try:
-            await send_function(interaction, self.fn, self.symbol)
+            await send_function(
+                interaction, self.fn, self.symbol, expiry=self.expiry
+            )
         except Exception as exc:
             log.exception("function button %s %s failed", self.fn, self.symbol)
             await interaction.followup.send(

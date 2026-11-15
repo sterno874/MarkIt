@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from app.security import ALIASES, TICKER_TOKEN, normalize_symbol
+from app.security import ALIASES, TICKER_TOKEN, extract_option_contracts, normalize_symbol
 from app.services import gemini
 
 log = logging.getLogger("market-desk.markit_nl")
@@ -218,6 +218,7 @@ class Intent:
     symbols: list[str] = field(default_factory=list)
     period: str = "6m"
     statement: str = "income"
+    expiry: str | None = None  # YYYY-MM-DD for options chain / contract
     query: str | None = None
     qty: float = 1.0
     position_id: int | None = None
@@ -264,9 +265,59 @@ def _detect_statement(text: str) -> str:
     return "income"
 
 
+def _extract_expiry_hint(text: str) -> str | None:
+    """Pull an explicit options expiry date from free text when present."""
+    m = re.search(
+        r"\b(?:exp(?:iry|iration)?|expires?)\s+(?:on\s+)?"
+        r"(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
+        text,
+        re.I,
+    )
+    if not m:
+        m = re.search(
+            r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+"
+            r"(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{2,4}))?\b",
+            text,
+            re.I,
+        )
+        if m:
+            from datetime import date as _date
+
+            from app.security import MONTHS, nearest_listed_expiry
+
+            month = MONTHS[m.group(1)[:3].upper()]
+            day = int(m.group(2))
+            year = int(m.group(3) or _date.today().year)
+            if year < 100:
+                year += 2000
+            target = _date(year, month, day)
+            if not m.group(3) and target < _date.today():
+                target = _date(year + 1, month, day)
+            # Without a root ticker we can't snap yet — return raw ISO.
+            return target.isoformat()
+        return None
+    raw = m.group(1)
+    if re.match(r"\d{4}-\d{2}-\d{2}", raw):
+        return raw
+    parts = re.split(r"[/-]", raw)
+    if len(parts) != 3:
+        return None
+    month, day, year = (int(parts[0]), int(parts[1]), int(parts[2]))
+    if year < 100:
+        year += 2000
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
 def _extract_symbols(text: str) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
+
+    # Option contracts first — otherwise "AAPL 360C 11/21/26" collapses to equity AAPL.
+    for sym in extract_option_contracts(text):
+        key = sym.upper()
+        if key not in seen:
+            seen.add(key)
+            found.append(sym)
 
     for m in re.finditer(r"\$([A-Za-z][A-Za-z0-9.\-]{0,11})", text):
         sym = normalize_symbol(m.group(1))
@@ -429,9 +480,16 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
     if not text:
         return None
 
-    return _intent_from_parts(
-        action=_detect_action(text) or "",
-        symbols=_extract_symbols(text),
+    symbols = _extract_symbols(text)
+    action = _detect_action(text) or ""
+    # Bare / quoted option contract → quote that OCC, not the equity root.
+    if symbols and re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbols[0].upper()):
+        if not action or action in {"quote", "options"}:
+            action = "quote"
+
+    intent = _intent_from_parts(
+        action=action,
+        symbols=symbols,
         period=_detect_period(text),
         statement=_detect_statement(text),
         qty=_extract_qty(text),
@@ -444,6 +502,28 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
         text=text,
         source="local",
     )
+    if intent:
+        occ = re.match(
+            r"^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})[CP]\d{8}$",
+            (symbols[0] if symbols else "").upper(),
+        )
+        if occ:
+            intent.expiry = f"20{occ.group(2)}-{occ.group(3)}-{occ.group(4)}"
+        else:
+            hint = _extract_expiry_hint(text)
+            if hint and intent.symbol:
+                from datetime import date as _date
+
+                from app.security import nearest_listed_expiry
+
+                try:
+                    root = intent.symbol.upper()
+                    intent.expiry = nearest_listed_expiry(
+                        root, _date.fromisoformat(hint)
+                    ).isoformat()
+                except Exception:
+                    intent.expiry = hint
+    return intent
 
 
 def _parse_planner_json(raw: str) -> dict | None:
@@ -493,10 +573,12 @@ Rules:
 - "graph NVDA" / "chart apple 3m" → post_chart
 - "quote AAPL" / "pill on tesla" → post_pill
 - "what's the bid on AAPL" / "AAPL spread" / "show ask" → post_book
+- "AAPL 360C 11/21/26" / "quote the AAPL Nov 20 362.5 call" → post_pill with OCC symbol (not equity AAPL)
+- "options chain AAPL exp 2026-11-20" → post_options with that expiry
 - "filings for MSFT" → post_filings
 - Never invent FX pairs from English words (APPLES is Apple Inc., not FX).
 - Prefer the most specific artifact for what they asked.
-- Quote pills include bid/ask when Yahoo has them; use post_book when the user is asking about the book.
+- For options, put the full OCC or strike+expiry in symbol/expiry — never substitute a different week.
 
 Last ticker in channel: {last_ticker or "none"}
 User request: {text}
