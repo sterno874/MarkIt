@@ -47,6 +47,7 @@ BOND_EXAMPLES: list[tuple[str, str]] = [
 PERIODS = ["1d", "5d", "1m", "3m", "6m", "1y", "5y", "ytd", "max"]
 STATEMENTS = ["income", "balance", "cashflow"]
 BUG_COMMANDS = [
+    "markit",
     "quote",
     "chart",
     "bond",

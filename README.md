@@ -12,22 +12,32 @@ Once the bot is in your server, you barely need this doc. Type `/help` in Discor
 
 ### The fastest way to use it
 
-1. Paste a symbol in chat (or prefix with `$`):
+**Plain English** — no need to memorize slash commands:
 
-   ```
-   AAPL
-   $NVDA
-   EURUSD
-   BTC
-   CL=F
-   IHRT 8 3/8 May 2027
-   ```
+```
+/markit show me the chart on AAPL
+/markit news for NVDA
+/markit quote BTC
+/markit compare AAPL and MSFT over a year
+/markit IHRT 8 3/8 May 2027
+/markit fear and greed
+```
 
-2. The bot posts a **pill** — price, change, and function buttons (GP / DES / FA / CN / …).
+Or paste a symbol in chat (or prefix with `$`):
 
-3. Or type `/` and start a command. Fields **autocomplete** — type a few letters of a ticker or bond and pick from the list.
+```
+AAPL
+$NVDA
+EURUSD
+BTC
+CL=F
+IHRT 8 3/8 May 2027
+```
 
-The channel remembers the last ticker for a few minutes, so `/chart` with no symbol reuses it.
+The bot posts a **pill** — price, change, and function buttons (GP / DES / FA / CN / …).  
+Slash fields also **autocomplete** — type a few letters of a ticker or bond and pick from the list.
+
+The channel remembers the last ticker for a few minutes, so `/chart` or `/markit show the chart` reuses it.
 
 ---
 

@@ -6,6 +6,8 @@ HELP_OVERVIEW = """
 Paste a ticker (`AAPL`, `$NVDA`, `EURUSD`, `BTC`, `CL=F`) or use slash commands.
 The bot posts a Bloomberg-style pill with quote + function buttons.
 
+**Easiest:** `/markit show me the chart on AAPL` — plain English, no command memorization.
+
 **Asset types:** equities · ETFs · indices · FX · crypto · futures · options · **individual corporate bonds (TRACE)** · bond ETFs / rates
 
 Use `/help topic:<name>` for details. Topics: `tickers`, `commands`, `bonds`, `alerts`, `watchlist`, `ideas`, `desk`, `ask`, `bugs`, `symbols`.
@@ -36,6 +38,7 @@ HELP_TOPICS: dict[str, str] = {
 
 | Command | Alias | What it does |
 |---|---|---|
+| `/markit` | | Plain English → chart, news, quote, bond… |
 | `/quote` | `/des` | Pill / description |
 | `/chart` | `/gp` | Price chart image |
 | `/financials` | `/fa` | Income / balance / cash flow |
@@ -109,13 +112,13 @@ Creates a card in-channel so the desk can track the thesis without a spreadsheet
 `/webhook` — show TradingView webhook URL (if WEBHOOK_PORT is set)
 """.strip(),
     "ask": """
-## Gemini (`/ask`)
+## Natural language (`/markit`) + Gemini (`/ask`)
 
-Set `GEMINI_API_KEY` in `.env`. Then:
-`/ask What happened to NVDA after earnings?`
-or @mention the bot with a question.
+`/markit show me the chart on AAPL` — routes to the real desk output (chart image, news, pill…).
+Works offline via local parsing; uses Gemini only when the phrase is ambiguous.
 
-Gemini can call desk tools (quote, chart summary, news, filings, etc.) and answer in plain language.
+`/ask What happened to NVDA after earnings?` — free-form Gemini Q&A (needs `GEMINI_API_KEY`).
+You can also @mention the bot with a question.
 """.strip(),
     "bugs": """
 ## Bug tickets

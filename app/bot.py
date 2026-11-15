@@ -22,6 +22,7 @@ log = logging.getLogger("market-desk")
 
 COGS = [
     "app.cogs.help",
+    "app.cogs.markit",
     "app.cogs.research",
     "app.cogs.alerts",
     "app.cogs.watchlist",
