@@ -52,7 +52,7 @@ async def send_function(
             sec = await run_blocking(get_security, symbol)
             text = (
                 f"**{sec.yahoo} dividends**\n"
-                f"Yield {fmt.pct(sec.yield_ if (sec.yield_ or 0) > 1 else sec.yield_, already_percent=(sec.yield_ or 0) > 1)}\n"
+                f"Yield {fmt.pct(sec.yield_)}\n"
                 f"Ex-date {fmt.as_date(sec.raw.get('exDividendDate'))}\n"
                 f"Trailing annual yield {fmt.pct(sec.raw.get('trailingAnnualDividendYield'))}"
             )

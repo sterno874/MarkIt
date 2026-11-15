@@ -90,9 +90,9 @@ def pill_text(
             stats.append(f"Mkt cap `{fmt.money(sec.market_cap, sec.currency)}`")
         if sec.trailing_pe:
             stats.append(f"P/E `{fmt.number(sec.trailing_pe)}`")
-        if sec.yield_:
-            y = sec.yield_
-            stats.append(f"Yield `{fmt.pct(y if y > 1 else y, already_percent=y > 1)}`")
+        if sec.yield_ is not None:
+            # yield_ is always stored as a fraction (0.003 = 0.3%)
+            stats.append(f"Yield `{fmt.pct(sec.yield_)}`")
         stats.append(f"Vol `{fmt.compact(sec.volume)}`")
         stats.append(f"52w `{fmt.number(sec.year_low)}–{fmt.number(sec.year_high)}`")
 

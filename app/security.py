@@ -377,7 +377,7 @@ def resolve(symbol: str) -> Security:
         market_cap=_float(_first(info.get("marketCap"), fast.get("market_cap"))),
         trailing_pe=_float(info.get("trailingPE")),
         forward_pe=_float(info.get("forwardPE")),
-        yield_=_float(_first(info.get("dividendYield"), info.get("yield"), info.get("trailingAnnualDividendYield"))),
+        yield_=_dividend_yield_fraction(info, last=_float(last)),
         beta=_float(info.get("beta")),
         year_high=_float(_first(info.get("fiftyTwoWeekHigh"), fast.get("year_high"))),
         year_low=_float(_first(info.get("fiftyTwoWeekLow"), fast.get("year_low"))),
@@ -439,6 +439,42 @@ def _float(value: Any) -> float | None:
     if number != number:
         return None
     return number
+
+
+def _dividend_yield_fraction(info: dict[str, Any], *, last: float | None = None) -> float | None:
+    """Return dividend yield as a fraction (0.003 = 0.3%).
+
+    Yahoo is inconsistent:
+    - ``trailingAnnualDividendYield`` → true fraction (0.00299)
+    - ``dividendYield`` → percent *points* (0.3 meaning 0.3%, 5.0 meaning 5%)
+    - ETF ``yield`` → usually a fraction
+    """
+    trailing = _float(info.get("trailingAnnualDividendYield"))
+    if trailing is not None and 0 <= trailing < 1:
+        return trailing
+
+    # Prefer computing from cash dividend / price when we can.
+    rate = _float(
+        _first(info.get("trailingAnnualDividendRate"), info.get("dividendRate"))
+    )
+    price = _float(
+        _first(last, info.get("currentPrice"), info.get("regularMarketPrice"))
+    )
+    if rate is not None and price and price > 0:
+        return rate / price
+
+    dy = _float(info.get("dividendYield"))
+    if dy is not None and dy >= 0:
+        # Yahoo dividendYield is percent points (0.3 → 0.3%, not 30%).
+        return dy / 100.0
+
+    y = _float(info.get("yield"))
+    if y is None or y < 0:
+        return None
+    # ETF yield is usually a fraction; if it's clearly percent points, scale it.
+    if y > 1.0:
+        return y / 100.0
+    return y
 
 
 def _as_iso(value: Any) -> str | None:
