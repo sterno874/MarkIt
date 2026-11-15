@@ -35,8 +35,25 @@ def test_pill_text_live_badge() -> None:
     assert "LIVE" in collapsed
     assert "tick ▲" in collapsed
     assert "AAPL" in collapsed
+    assert "```ansi" in collapsed
+    assert "\u001b[1;32m" in collapsed  # green for up day
     assert "Apple designs" not in collapsed
     assert "Mkt cap" not in collapsed
+
+    down = Security(
+        symbol="XYZ",
+        yahoo="XYZ",
+        quote_type="EQUITY",
+        name="Down Co",
+        last=7.86,
+        change=-0.17,
+        change_pct=-2.12,
+        currency="USD",
+    )
+    down_text = pill_text(down, live=True, expanded=False)
+    assert "\u001b[1;31m" in down_text  # red for down day
+    assert "7.8600" in down_text
+    assert "-0.17" in down_text
 
     expanded = pill_text(sec, previous_last=189.5, live=True, expanded=True)
     assert "**Apple**" in expanded

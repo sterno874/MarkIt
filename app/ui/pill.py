@@ -27,6 +27,38 @@ def _tick_marker(last: float | None, previous_last: float | None) -> str:
     return " · ="
 
 
+# Discord ansi code-block colors (only reliable way to paint quote text red/green).
+_ANSI_GREEN = "\u001b[1;32m"
+_ANSI_RED = "\u001b[1;31m"
+_ANSI_GRAY = "\u001b[0;37m"
+_ANSI_RESET = "\u001b[0m"
+
+
+def _quote_ansi_block(
+    sec: Security,
+    *,
+    previous_last: float | None,
+    live: bool,
+    as_of: datetime | None,
+) -> str:
+    """IB-style colored last / day change line via Discord ```ansi```."""
+    change = fmt.signed(sec.change) if sec.change is not None else "—"
+    change_pct = fmt.pct(sec.change_pct, already_percent=True) if sec.change_pct is not None else "—"
+    day_up = (sec.change or 0) > 0
+    day_down = (sec.change or 0) < 0
+    arrow = "▲" if day_up else "▼" if day_down else "•"
+    price = fmt.number(sec.last, 4 if (sec.last or 0) < 10 else 2)
+    tick = _tick_marker(sec.last, previous_last)
+    colour = _ANSI_GREEN if day_up else _ANSI_RED if day_down else _ANSI_GRAY
+
+    when = (as_of or datetime.now(timezone.utc)).astimezone().strftime("%H:%M:%S")
+    live_bit = f" · LIVE {when}" if live else f" · as of {when}"
+    currency = f" · {sec.currency}" if sec.currency else ""
+
+    body = f"{arrow} {price}  {change} ({change_pct}){tick}{currency}{live_bit}"
+    return f"```ansi\n{colour}{body}{_ANSI_RESET}\n```"
+
+
 def pill_text(
     sec: Security,
     *,
@@ -35,33 +67,21 @@ def pill_text(
     as_of: datetime | None = None,
     expanded: bool = False,
 ) -> str:
-    change = fmt.signed(sec.change) if sec.change is not None else "—"
-    change_pct = fmt.pct(sec.change_pct, already_percent=True) if sec.change_pct is not None else "—"
-    day_up = (sec.change or 0) > 0
-    day_down = (sec.change or 0) < 0
-    arrow = "▲" if day_up else "▼" if day_down else "•"
-    price = fmt.number(sec.last, 4 if (sec.last or 0) < 10 else 2)
-    tick = _tick_marker(sec.last, previous_last)
-
-    # IB-style: day direction owns the headline; last tick called out separately.
-    when = (as_of or datetime.now(timezone.utc)).astimezone().strftime("%H:%M:%S")
-    live_bit = f" · LIVE {when}" if live else f" · as of {when}"
+    quote = _quote_ansi_block(sec, previous_last=previous_last, live=live, as_of=as_of)
 
     # Collapsed: symbol + last + day move only. Unpack for the rest.
     if not expanded:
         return "\n".join(
             [
                 f"# {sec.yahoo} · {sec.asset_label}",
-                f"{arrow} `{price}` **{change} ({change_pct})**{tick} · {sec.currency or ''}".rstrip()
-                + live_bit,
+                quote,
             ]
         )
 
     lines = [
         f"# {sec.yahoo} · {sec.asset_label}",
         f"**{sec.name}**",
-        f"{arrow} `{price}` **{change} ({change_pct})**{tick} · {sec.currency or ''}".rstrip()
-        + live_bit,
+        quote,
     ]
 
     meta: list[str] = []
