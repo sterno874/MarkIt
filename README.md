@@ -1,6 +1,6 @@
 # MarkIt · Market Desk
 
-A Discord research bot for investing communities — Bloomberg-style ticker pills, multi-asset quotes, TRACE corporate bonds, alerts, watchlists, trade ideas, and optional Gemini Q&A.
+A Discord research bot for investing communities — ticker pills, multi-asset quotes, TRACE corporate bonds, alerts, watchlists, trade ideas, and optional Gemini Q&A.
 
 Paste a ticker. Get a card. Drill in with slash commands.
 
@@ -223,7 +223,7 @@ Aliases like `BTC` → `BTC-USD`, `SPX` → `^GSPC`, `ES` → `ES=F` are built i
 
 | Command | Alias | What it does |
 |---|---|---|
-| `/quote` | `/des` | Bloomberg-style pill |
+| `/quote` | `/des` | Quote pill |
 | `/quote-smart` | | Auto-detect equity vs bond |
 | `/chart` | `/gp` | Price chart image |
 | `/financials` | `/fa` | Income / balance / cash flow |

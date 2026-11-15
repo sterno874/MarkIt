@@ -77,7 +77,7 @@ class Research(commands.Cog):
         buf = await run_blocking(charts.render_chart, sym, period)
         await interaction.followup.send(file=discord.File(buf, filename=f"{sym}-chart.png"))
 
-    @app_commands.command(name="quote", description="Bloomberg-style quote pill for any asset")
+    @app_commands.command(name="quote", description="Quote pill for any asset")
     @app_commands.describe(symbol="Equity, ETF, FX, crypto, future, option, index…")
     async def quote(self, interaction: discord.Interaction, symbol: str) -> None:
         await self._send_quote(interaction, symbol)

@@ -134,7 +134,7 @@ class BondQuote:
 
     @property
     def yahoo(self) -> str:
-        # Use a stable chat key: prefer Bloomberg-style ticker, else CUSIP.
+        # Use a stable chat key: prefer issuer ticker, else CUSIP.
         return self.display or self.cusip or self.finra_symbol or "BOND"
 
     @property

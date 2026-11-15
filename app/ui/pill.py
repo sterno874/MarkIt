@@ -283,7 +283,7 @@ def _collapsed_action_buttons(sec: Security) -> list[ui.Button]:
 
 
 class TickerPill(ui.LayoutView):
-    """Bloomberg/IB-style quote card — collapsed by default; Expand unpacks tools."""
+    """Desk quote card — collapsed by default; Expand unpacks tools."""
 
     def __init__(
         self,
