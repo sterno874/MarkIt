@@ -64,8 +64,9 @@ jobs:
             curl -LsSf https://astral.sh/uv/install.sh | sh
             export PATH="$HOME/.local/bin:$PATH"
           fi
-          uv venv --python 3.13 .venv
+          uv venv --python 3.13 --clear .venv
           uv pip install --python .venv/bin/python -r requirements.txt
+
           if [[ ! -f /etc/systemd/system/markit.service ]]; then
             sudo cp deploy/markit.service /etc/systemd/system/markit.service
             sudo systemctl daemon-reload
