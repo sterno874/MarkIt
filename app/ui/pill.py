@@ -105,25 +105,22 @@ def pill_text(
     expanded: bool = False,
 ) -> str:
     quote = _quote_ansi_block(sec, previous_last=previous_last, live=live, as_of=as_of)
-    book = _book_line(sec)
 
-    # Collapsed: last + top of book. Unpack for fundamentals / ranges.
+    # Collapsed: last + day move only. Bid/ask stays off until Expand or a book ask.
     if not expanded:
-        lines = [
-            f"# {sec.yahoo} · {sec.asset_label}",
-            quote,
-        ]
-        if book:
-            lines.append(book)
-        elif sec.volume is not None:
-            lines.append(f"Vol `{fmt.compact(sec.volume)}` shares")
-        return "\n".join(lines)
+        return "\n".join(
+            [
+                f"# {sec.yahoo} · {sec.asset_label}",
+                quote,
+            ]
+        )
 
     lines = [
         f"# {sec.yahoo} · {sec.asset_label}",
         f"**{sec.name}**",
         quote,
     ]
+    book = _book_line(sec)
     if book:
         lines.append(book)
 

@@ -41,11 +41,12 @@ def test_pill_text_live_badge() -> None:
     assert "AAPL" in collapsed
     assert "```ansi" in collapsed
     assert "\u001b[1;32m" in collapsed  # green for up day
-    assert "Bid" in collapsed and "Ask" in collapsed
+    assert "Bid" not in collapsed  # book only when expanded / asked
     assert "Apple designs" not in collapsed
     assert "Mkt cap" not in collapsed
     book = _book_line(sec)
     assert book and "Spr" in book and "Mid" in book
+    assert "Bid" in pill_text(sec, live=True, expanded=True)
 
     down = Security(
         symbol="XYZ",
