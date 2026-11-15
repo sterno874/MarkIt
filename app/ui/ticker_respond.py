@@ -25,7 +25,9 @@ async def publish_ticker_pill(
     live: bool = True,
     expanded: bool = False,
 ) -> discord.Message | None:
-    view = TickerPill(sec, live=live, expanded=expanded)
+    # Don't advertise LIVE when there's no last (or it's an option contract).
+    effective_live = bool(live and sec.last is not None and not sec.is_option)
+    view = TickerPill(sec, live=effective_live, expanded=expanded)
     msg: discord.Message | Any | None = None
     if isinstance(destination, discord.Interaction):
         if destination.response.is_done():
@@ -38,13 +40,7 @@ async def publish_ticker_pill(
 
     # Only live-tick liquid cash quotes — skip empty shells and option contracts
     # (OCC symbols don't have reliable Yahoo intraday ticks).
-    if (
-        live
-        and msg is not None
-        and not ephemeral
-        and sec.last is not None
-        and not sec.is_option
-    ):
+    if effective_live and msg is not None and not ephemeral:
         guild_id = 0
         channel_id = getattr(msg, "channel", None) and msg.channel.id
         if isinstance(destination, discord.Interaction):
@@ -81,32 +77,38 @@ async def refresh_ticker_message(
     if expanded is None:
         expanded = bool(dict(row).get("expanded")) if row else False
     sec = await asyncio.to_thread(get_security, symbol)
+    is_live = sec.last is not None and not sec.is_option
     await message.edit(
-        view=TickerPill(sec, previous_last=previous_last, live=True, expanded=expanded)
+        view=TickerPill(
+            sec, previous_last=previous_last, live=is_live, expanded=expanded
+        )
     )
-    if extend_live:
+    if not is_live:
+        if row:
+            db.live_pill_remove(message.id)
+        return sec
+
+    if row:
         db.live_pill_touch(
             message.id,
             last_price=sec.last,
-            extend_seconds=LIVE_PILL_TTL_SEC,
+            # Manual Refresh extends TTL; background poll only updates last.
+            extend_seconds=LIVE_PILL_TTL_SEC if extend_live else None,
         )
     else:
-        if row:
-            db.live_pill_touch(message.id, last_price=sec.last)
-        else:
-            # Re-register if someone hits Refresh after expiry.
-            guild_id = message.guild.id if message.guild else 0
-            if guild_id:
-                db.live_pill_register(
-                    message_id=message.id,
-                    channel_id=message.channel.id,
-                    guild_id=guild_id,
-                    symbol=sec.yahoo,
-                    last_price=sec.last,
-                    ttl_seconds=LIVE_PILL_TTL_SEC,
-                    max_active=LIVE_PILL_MAX,
-                    expanded=expanded,
-                )
+        # Row missing (TTL expired) — Refresh or poll restart re-registers.
+        guild_id = message.guild.id if message.guild else 0
+        if guild_id:
+            db.live_pill_register(
+                message_id=message.id,
+                channel_id=message.channel.id,
+                guild_id=guild_id,
+                symbol=sec.yahoo,
+                last_price=sec.last,
+                ttl_seconds=LIVE_PILL_TTL_SEC,
+                max_active=LIVE_PILL_MAX,
+                expanded=expanded,
+            )
     return sec
 
 

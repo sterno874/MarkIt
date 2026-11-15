@@ -33,3 +33,18 @@ def test_options_chain_uses_requested_expiry() -> None:
     data = options_chain("AAPL", "2026-11-20")
     assert data["expiry"] == "2026-11-20"
     assert "2026-11-20" in data["text"]
+
+
+def test_bare_iso_expiry_and_options_verb() -> None:
+    intent = parse_local("options on AAPL 2026-11-20")
+    assert intent is not None
+    assert intent.action == "options"
+    assert intent.symbol == "AAPL"
+    assert intent.expiry == "2026-11-20"
+
+
+def test_aapl_options_maps_to_options_action() -> None:
+    intent = parse_local("AAPL options")
+    assert intent is not None
+    assert intent.action == "options"
+    assert intent.symbol == "AAPL"

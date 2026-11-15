@@ -10,15 +10,15 @@ from app.security import Security
 from app.ui.links import external_links
 
 # custom_id: md:fn:<function>:<SYMBOL>[:YYYY-MM-DD]  (optional expiry for opt/chain)
+# Symbol width 48 covers long OCC / Yahoo contract ids.
+_SYM = r"[A-Za-z0-9^.=_\-]{1,48}"
 FN_TEMPLATE = (
-    r"md:fn:(?P<fn>gp|des|fa|cn|phdc|anr|ern|dvd|opt|short):"
-    r"(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
-    r"(?::(?P<expiry>\d{4}-\d{2}-\d{2}))?"
+    rf"md:fn:(?P<fn>gp|des|fa|cn|phdc|anr|ern|dvd|opt|short):"
+    rf"(?P<symbol>{_SYM})"
+    rf"(?::(?P<expiry>\d{{4}}-\d{{2}}-\d{{2}}))?"
 )
-# Manual refresh on a live pill
-REFRESH_TEMPLATE = r"md:ref:(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
-# Expand / collapse — state in custom_id: 0=collapsed (button expands), 1=expanded (button collapses)
-EXPAND_TEMPLATE = r"md:xp:(?P<state>[01]):(?P<symbol>[A-Za-z0-9^.=_\-]{1,32})"
+REFRESH_TEMPLATE = rf"md:ref:(?P<symbol>{_SYM})"
+EXPAND_TEMPLATE = rf"md:xp:(?P<state>[01]):(?P<symbol>{_SYM})"
 
 
 def _tick_marker(last: float | None, previous_last: float | None) -> str:
@@ -298,6 +298,7 @@ class TickerPill(ui.LayoutView):
         ]
         if expanded:
             fns = function_buttons(sec)
+            extras = extra_function_buttons(sec)
             # Row 1: Collapse + Refresh + primary research (max 5).
             children.append(
                 ui.ActionRow(
@@ -305,9 +306,12 @@ class TickerPill(ui.LayoutView):
                     *fns[:4],
                 )
             )
-            rest = fns[4:] + extra_function_buttons(sec)
+            # Keep Options (and other extras) — spill to a third row if needed.
+            rest = fns[4:] + extras
             if rest:
                 children.append(ui.ActionRow(*rest[:5]))
+            if len(rest) > 5:
+                children.append(ui.ActionRow(*rest[5:10]))
             links = [
                 ui.Button(style=discord.ButtonStyle.link, label=label, url=url)
                 for label, url in external_links(sec)[:4]

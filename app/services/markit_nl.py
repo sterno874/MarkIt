@@ -183,7 +183,14 @@ ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bond", re.compile(r"\b(bond|trace|cusip|corporate\s+bond)\b", re.I)),
     ("congress", re.compile(r"\b(congress|politician|senate|house\s+trade|stock\s+act)\b", re.I)),
     ("filings", re.compile(r"\b(filing|filings|10-?k|10-?q|8-?k|sec\b|edgar)\b", re.I)),
-    ("options", re.compile(r"\b(options?\s+chain|option\s+chain|\bopt\b|calls?\s+and\s+puts?)\b", re.I)),
+    (
+        "options",
+        re.compile(
+            r"\b(options?\s+chain|option\s+chain|\bopt\b|calls?\s+and\s+puts?|"
+            r"options?\s+on|options?\s+for|\boptions?\b)\b",
+            re.I,
+        ),
+    ),
     ("short", re.compile(r"\b(short\s+interest|shorts?\s+float|days?\s+to\s+cover)\b", re.I)),
     ("dividends", re.compile(r"\b(dividend|dividends|yield|ex-?date|dvd)\b", re.I)),
     ("earnings", re.compile(r"\b(earnings?|eps|ern)\b", re.I)),
@@ -267,45 +274,50 @@ def _detect_statement(text: str) -> str:
 
 def _extract_expiry_hint(text: str) -> str | None:
     """Pull an explicit options expiry date from free text when present."""
+    # Bare ISO first: "options AAPL 2026-11-20"
+    m = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+    if m:
+        return m.group(1)
+
     m = re.search(
         r"\b(?:exp(?:iry|iration)?|expires?)\s+(?:on\s+)?"
         r"(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
         text,
         re.I,
     )
+    if m:
+        raw = m.group(1)
+        if re.match(r"\d{4}-\d{2}-\d{2}", raw):
+            return raw
+        parts = re.split(r"[/-]", raw)
+        if len(parts) != 3:
+            return None
+        month, day, year = (int(parts[0]), int(parts[1]), int(parts[2]))
+        if year < 100:
+            year += 2000
+        return f"{year:04d}-{month:02d}-{day:02d}"
+
+    m = re.search(
+        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+"
+        r"(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{2,4}))?\b",
+        text,
+        re.I,
+    )
     if not m:
-        m = re.search(
-            r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+"
-            r"(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{2,4}))?\b",
-            text,
-            re.I,
-        )
-        if m:
-            from datetime import date as _date
-
-            from app.security import MONTHS, nearest_listed_expiry
-
-            month = MONTHS[m.group(1)[:3].upper()]
-            day = int(m.group(2))
-            year = int(m.group(3) or _date.today().year)
-            if year < 100:
-                year += 2000
-            target = _date(year, month, day)
-            if not m.group(3) and target < _date.today():
-                target = _date(year + 1, month, day)
-            # Without a root ticker we can't snap yet — return raw ISO.
-            return target.isoformat()
         return None
-    raw = m.group(1)
-    if re.match(r"\d{4}-\d{2}-\d{2}", raw):
-        return raw
-    parts = re.split(r"[/-]", raw)
-    if len(parts) != 3:
-        return None
-    month, day, year = (int(parts[0]), int(parts[1]), int(parts[2]))
+    from datetime import date as _date
+
+    from app.security import MONTHS
+
+    month = MONTHS[m.group(1)[:3].upper()]
+    day = int(m.group(2))
+    year = int(m.group(3) or _date.today().year)
     if year < 100:
         year += 2000
-    return f"{year:04d}-{month:02d}-{day:02d}"
+    target = _date(year, month, day)
+    if not m.group(3) and target < _date.today():
+        target = _date(year + 1, month, day)
+    return target.isoformat()
 
 
 def _extract_symbols(text: str) -> list[str]:
@@ -562,6 +574,7 @@ JSON keys:
   symbols: array for compare, else []
   period: 1d|5d|1m|3m|6m|1y|5y|ytd|max
   statement: income|balance|cashflow
+  expiry: YYYY-MM-DD for options when the user named a date, else null
   query: bond string if post_bond, else null
   qty: number for paper trades (default 1)
   position_id: int or null
@@ -609,6 +622,13 @@ User request: {text}
     statement = str(data.get("statement") or "income").lower()
     if statement not in {"income", "balance", "cashflow"}:
         statement = "income"
+    expiry = data.get("expiry")
+    if expiry:
+        expiry = str(expiry).strip()[:10]
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", expiry):
+            expiry = _extract_expiry_hint(text) or _extract_expiry_hint(str(data.get("expiry")))
+    else:
+        expiry = _extract_expiry_hint(text)
     query = data.get("query")
     try:
         qty_f = float(data.get("qty", 1) or 1)
@@ -659,12 +679,24 @@ User request: {text}
         except Exception:
             continue
 
+    if expiry and symbol and action in {"options", "quote", "book"}:
+        from datetime import date as _date
+
+        from app.security import nearest_listed_expiry
+
+        try:
+            root = re.sub(r"\d{6}[CP]\d{8}$", "", symbol.upper()) or symbol
+            expiry = nearest_listed_expiry(root, _date.fromisoformat(expiry)).isoformat()
+        except Exception:
+            pass
+
     return Intent(
         action=action,
         symbol=symbol,
         symbols=norm_symbols,
         period=period,
         statement=statement,
+        expiry=expiry,
         query=str(query) if query else None,
         qty=qty_f,
         position_id=position_id_i,
