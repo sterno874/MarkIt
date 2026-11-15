@@ -36,7 +36,8 @@ async def publish_ticker_pill(
     else:
         msg = await destination.send(view=view)
 
-    if live and msg is not None and not ephemeral:
+    # Only live-tick tradeable quotes — never register empty shells (APPLES=X etc.).
+    if live and msg is not None and not ephemeral and sec.last is not None:
         guild_id = 0
         channel_id = getattr(msg, "channel", None) and msg.channel.id
         if isinstance(destination, discord.Interaction):
@@ -54,6 +55,7 @@ async def publish_ticker_pill(
                     last_price=sec.last,
                     ttl_seconds=LIVE_PILL_TTL_SEC,
                     max_active=LIVE_PILL_MAX,
+                    expanded=expanded,
                 )
             except Exception:
                 log.exception("failed to register live pill %s", getattr(msg, "id", None))

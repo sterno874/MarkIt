@@ -74,3 +74,12 @@ def test_filings_and_pill_verbs() -> None:
     pill = parse_local("pill for AAPL")
     assert pill and pill.action == "quote"
     assert pill.symbol == "AAPL"
+
+
+def test_bid_ask_routes_to_book() -> None:
+    intent = parse_local("what's the bid on AAPL")
+    assert intent is not None
+    assert intent.action == "book"
+    assert intent.symbol == "AAPL"
+    spr = parse_local("AAPL spread")
+    assert spr and spr.action == "book"

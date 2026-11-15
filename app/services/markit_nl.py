@@ -21,7 +21,8 @@ PERIODS = {"1d", "5d", "1m", "3m", "6m", "1y", "5y", "ytd", "max"}
 
 # Desk tools the agent may call — each maps to a real Discord post type.
 DESK_TOOLS = """
-post_pill       — live quote pill / ticker card (price, day change)
+post_pill       — live quote pill / ticker card (last, day change, bid/ask/spread when available)
+post_book       — same pill expanded on top-of-book (bid/ask/size/spread) — use for "what's the bid", "spread", "ask size"
 post_chart      — price chart image (with volume subplot)
 post_volume     — volume-focused chart for a period ("volume last week")
 post_news       — company headlines
@@ -47,6 +48,8 @@ ask             — free-form research answer (text only; last resort)
 # Local action names used by the cog (kept stable).
 ACTION_ALIASES = {
     "post_pill": "quote",
+    "post_book": "book",
+    "book": "book",
     "post_chart": "chart",
     "post_volume": "volume",
     "post_news": "news",
@@ -121,6 +124,7 @@ STOPWORDS = {
     "P&L", "ATTRIBUTION", "POSITIONS", "POSITION", "CLOSE", "CLOSED", "OPEN",
     "SERVER", "TOTAL", "TRADER", "TRADERS", "SHARES", "SHARE", "UNITS",
     "VOLUME", "VOL", "VOLUMES", "PILL", "CARD", "LIVE",
+    "BID", "ASK", "SPREAD", "MID", "SIZE",
 }
 
 ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -192,6 +196,13 @@ ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "volume",
         re.compile(
             r"\b(volume|vol\b|trading\s+volume|share\s+volume|daily\s+volume)\b",
+            re.I,
+        ),
+    ),
+    (
+        "book",
+        re.compile(
+            r"\b(bid|ask|bids?|asks?|spread|top\s+of\s+book|bid[\s/-]?ask|mid\s*price|nbbo)\b",
             re.I,
         ),
     ),
@@ -481,9 +492,11 @@ Rules:
 - "show me apples volume for the past week" → post_volume / AAPL / 5d
 - "graph NVDA" / "chart apple 3m" → post_chart
 - "quote AAPL" / "pill on tesla" → post_pill
+- "what's the bid on AAPL" / "AAPL spread" / "show ask" → post_book
 - "filings for MSFT" → post_filings
 - Never invent FX pairs from English words (APPLES is Apple Inc., not FX).
 - Prefer the most specific artifact for what they asked.
+- Quote pills include bid/ask when Yahoo has them; use post_book when the user is asking about the book.
 
 Last ticker in channel: {last_ticker or "none"}
 User request: {text}
@@ -601,7 +614,7 @@ def resolve_intent(text: str, *, last_ticker: str | None = None) -> Intent:
             local.action in {"fgi", "heatmap", "help"}
             or local.action.startswith("paper_")
             or (local.symbol and local.action in {
-                "chart", "volume", "news", "filings", "quote", "compare",
+                "chart", "volume", "news", "filings", "quote", "book", "compare",
                 "financials", "holders", "analysts", "earnings", "dividends",
                 "options", "short", "congress", "bond",
             })

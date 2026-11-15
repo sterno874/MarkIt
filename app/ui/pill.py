@@ -34,6 +34,43 @@ _ANSI_GRAY = "\u001b[0;37m"
 _ANSI_RESET = "\u001b[0m"
 
 
+def _px(value: float | None, *, digits: int | None = None) -> str:
+    if value is None:
+        return "—"
+    if digits is None:
+        digits = 4 if abs(value) < 10 else 2
+    return fmt.number(value, digits)
+
+
+def _size(value: float | None) -> str:
+    if value is None:
+        return ""
+    if float(value).is_integer():
+        return str(int(value))
+    return fmt.compact(value)
+
+
+def _book_line(sec: Security) -> str | None:
+    """Bid / ask / spread — IB-style top of book when Yahoo provides it."""
+    if not sec.has_book:
+        return None
+    digits = 4 if (sec.last or sec.bid or 0) < 10 else 2
+    bid = _px(sec.bid, digits=digits)
+    ask = _px(sec.ask, digits=digits)
+    bid_s = f"Bid `{bid}`"
+    if sec.bid_size is not None and sec.bid_size > 0:
+        bid_s = f"Bid `{bid}` x{_size(sec.bid_size)}"
+    ask_s = f"Ask `{ask}`"
+    if sec.ask_size is not None and sec.ask_size > 0:
+        ask_s = f"Ask `{ask}` x{_size(sec.ask_size)}"
+    parts = [bid_s, ask_s]
+    if sec.spread is not None:
+        parts.append(f"Spr `{_px(sec.spread, digits=digits)}`")
+    if sec.mid is not None:
+        parts.append(f"Mid `{_px(sec.mid, digits=digits)}`")
+    return " · ".join(parts)
+
+
 def _quote_ansi_block(
     sec: Security,
     *,
@@ -47,7 +84,7 @@ def _quote_ansi_block(
     day_up = (sec.change or 0) > 0
     day_down = (sec.change or 0) < 0
     arrow = "▲" if day_up else "▼" if day_down else "•"
-    price = fmt.number(sec.last, 4 if (sec.last or 0) < 10 else 2)
+    price = _px(sec.last)
     tick = _tick_marker(sec.last, previous_last)
     colour = _ANSI_GREEN if day_up else _ANSI_RED if day_down else _ANSI_GRAY
 
@@ -68,21 +105,27 @@ def pill_text(
     expanded: bool = False,
 ) -> str:
     quote = _quote_ansi_block(sec, previous_last=previous_last, live=live, as_of=as_of)
+    book = _book_line(sec)
 
-    # Collapsed: symbol + last + day move only. Unpack for the rest.
+    # Collapsed: last + top of book. Unpack for fundamentals / ranges.
     if not expanded:
-        return "\n".join(
-            [
-                f"# {sec.yahoo} · {sec.asset_label}",
-                quote,
-            ]
-        )
+        lines = [
+            f"# {sec.yahoo} · {sec.asset_label}",
+            quote,
+        ]
+        if book:
+            lines.append(book)
+        elif sec.volume is not None:
+            lines.append(f"Vol `{fmt.compact(sec.volume)}` shares")
+        return "\n".join(lines)
 
     lines = [
         f"# {sec.yahoo} · {sec.asset_label}",
         f"**{sec.name}**",
         quote,
     ]
+    if book:
+        lines.append(book)
 
     meta: list[str] = []
     if sec.exchange:
@@ -96,38 +139,44 @@ def pill_text(
 
     stats: list[str] = []
     if sec.is_option:
-        stats.append(f"Strike `{fmt.number(sec.strike)}`")
+        stats.append(f"Strike `{_px(sec.strike)}`")
         stats.append(f"{sec.option_side or 'Option'} exp `{sec.expiry or '—'}`")
-        if sec.bid is not None or sec.ask is not None:
-            stats.append(f"Bid/Ask `{fmt.number(sec.bid)}/{fmt.number(sec.ask)}`")
         if sec.open_interest is not None:
             stats.append(f"OI `{fmt.compact(sec.open_interest)}`")
         if sec.underlying:
             stats.append(f"Underlying `{sec.underlying}`")
     elif sec.is_fx:
-        stats.append(f"Open `{fmt.number(sec.open, 4)}`")
-        stats.append(f"Day `{fmt.number(sec.day_low, 4)}–{fmt.number(sec.day_high, 4)}`")
-        stats.append(f"52w `{fmt.number(sec.year_low, 4)}–{fmt.number(sec.year_high, 4)}`")
+        stats.append(f"Open `{_px(sec.open, digits=4)}`")
+        stats.append(f"Day `{_px(sec.day_low, digits=4)}–{_px(sec.day_high, digits=4)}`")
+        stats.append(f"52w `{_px(sec.year_low, digits=4)}–{_px(sec.year_high, digits=4)}`")
     elif sec.is_crypto or sec.is_future:
         if sec.market_cap:
             stats.append(f"Mkt cap `{fmt.money(sec.market_cap, sec.currency)}`")
         stats.append(f"Vol `{fmt.compact(sec.volume)}`")
-        stats.append(f"Day `{fmt.number(sec.day_low)}–{fmt.number(sec.day_high)}`")
-        stats.append(f"52w `{fmt.number(sec.year_low)}–{fmt.number(sec.year_high)}`")
+        stats.append(f"Day `{_px(sec.day_low)}–{_px(sec.day_high)}`")
+        stats.append(f"52w `{_px(sec.year_low)}–{_px(sec.year_high)}`")
     elif sec.is_index or sec.is_rate_like:
-        stats.append(f"Open `{fmt.number(sec.open)}`")
-        stats.append(f"Day `{fmt.number(sec.day_low)}–{fmt.number(sec.day_high)}`")
-        stats.append(f"52w `{fmt.number(sec.year_low)}–{fmt.number(sec.year_high)}`")
+        stats.append(f"Open `{_px(sec.open)}`")
+        stats.append(f"Day `{_px(sec.day_low)}–{_px(sec.day_high)}`")
+        stats.append(f"52w `{_px(sec.year_low)}–{_px(sec.year_high)}`")
     else:
         if sec.market_cap:
             stats.append(f"Mkt cap `{fmt.money(sec.market_cap, sec.currency)}`")
         if sec.trailing_pe:
             stats.append(f"P/E `{fmt.number(sec.trailing_pe)}`")
         if sec.yield_ is not None:
-            # yield_ is always stored as a fraction (0.003 = 0.3%)
             stats.append(f"Yield `{fmt.pct_frac(sec.yield_)}`")
-        stats.append(f"Vol `{fmt.compact(sec.volume)}`")
-        stats.append(f"52w `{fmt.number(sec.year_low)}–{fmt.number(sec.year_high)}`")
+        stats.append(f"Vol `{fmt.compact(sec.volume)}` shares")
+        if sec.avg_volume_10d is not None:
+            stats.append(f"10d avg vol `{fmt.compact(sec.avg_volume_10d)}`")
+        elif sec.avg_volume is not None:
+            stats.append(f"Avg vol `{fmt.compact(sec.avg_volume)}`")
+        stats.append(f"Day `{_px(sec.day_low)}–{_px(sec.day_high)}`")
+        stats.append(f"52w `{_px(sec.year_low)}–{_px(sec.year_high)}`")
+        if sec.pre_market is not None:
+            stats.append(f"Pre `{_px(sec.pre_market)}`")
+        if sec.post_market is not None:
+            stats.append(f"Post `{_px(sec.post_market)}`")
 
     if stats:
         lines.append(" · ".join(stats))

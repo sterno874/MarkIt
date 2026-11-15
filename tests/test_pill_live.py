@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app import format as fmt
-from app.ui.pill import _tick_marker, pill_text
+from app.ui.pill import _book_line, _tick_marker, pill_text
 from app.security import Security
 
 
@@ -31,14 +31,21 @@ def test_pill_text_live_badge() -> None:
         market_cap=3e12,
         summary="Apple designs phones.",
     )
+    sec.bid = 189.9
+    sec.ask = 190.1
+    sec.bid_size = 2
+    sec.ask_size = 4
     collapsed = pill_text(sec, previous_last=189.5, live=True, expanded=False)
     assert "LIVE" in collapsed
     assert "tick ▲" in collapsed
     assert "AAPL" in collapsed
     assert "```ansi" in collapsed
     assert "\u001b[1;32m" in collapsed  # green for up day
+    assert "Bid" in collapsed and "Ask" in collapsed
     assert "Apple designs" not in collapsed
     assert "Mkt cap" not in collapsed
+    book = _book_line(sec)
+    assert book and "Spr" in book and "Mid" in book
 
     down = Security(
         symbol="XYZ",

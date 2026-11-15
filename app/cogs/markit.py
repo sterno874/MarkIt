@@ -230,10 +230,15 @@ class MarkIt(commands.Cog):
             )
             return
 
-        if action == "quote":
+        if action in {"quote", "book"}:
             sec = await run_blocking(get_security, symbol)
             await self._remember(ctx, sec.yahoo)
-            await publish_ticker_pill(ctx.destination, sec)
+            # Book asks open expanded so bid/ask/spread are visible immediately.
+            await publish_ticker_pill(
+                ctx.destination,
+                sec,
+                expanded=(action == "book"),
+            )
             return
 
         if action == "financials":

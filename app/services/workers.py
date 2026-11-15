@@ -109,12 +109,22 @@ class DeskWorkers:
                 previous = (
                     float(row["last_price"]) if row["last_price"] is not None else None
                 )
-                await refresh_ticker_message(
-                    message,
-                    row["symbol"],
-                    previous_last=previous,
-                    extend_live=False,
-                )
+                try:
+                    await refresh_ticker_message(
+                        message,
+                        row["symbol"],
+                        previous_last=previous,
+                        extend_live=False,
+                    )
+                except ValueError as exc:
+                    # Drop dead symbols (delisted / junk like APPLES=X) instead of looping errors.
+                    log.warning(
+                        "live pill %s (%s) dropped: %s",
+                        row["message_id"],
+                        row["symbol"],
+                        exc,
+                    )
+                    db.live_pill_remove(int(row["message_id"]))
             except Exception:
                 log.exception("live pill refresh failed for %s", row["message_id"])
 

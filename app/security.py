@@ -207,6 +207,11 @@ class Security:
     days_to_cover: float | None = None
     bid: float | None = None
     ask: float | None = None
+    bid_size: float | None = None
+    ask_size: float | None = None
+    avg_volume_10d: float | None = None
+    post_market: float | None = None
+    pre_market: float | None = None
     open_interest: float | None = None
     strike: float | None = None
     expiry: str | None = None
@@ -217,6 +222,22 @@ class Security:
     @property
     def asset_label(self) -> str:
         return fmt.ASSET_LABELS.get(self.quote_type.upper(), self.quote_type.title() or "Security")
+
+    @property
+    def spread(self) -> float | None:
+        if self.bid is None or self.ask is None:
+            return None
+        return self.ask - self.bid
+
+    @property
+    def mid(self) -> float | None:
+        if self.bid is None or self.ask is None:
+            return None
+        return (self.bid + self.ask) / 2.0
+
+    @property
+    def has_book(self) -> bool:
+        return self.bid is not None or self.ask is not None
 
     @property
     def is_equity_like(self) -> bool:
@@ -423,6 +444,9 @@ def resolve(symbol: str) -> Security:
 
     if not last and not name:
         raise ValueError(f"No quote found for `{symbol}`")
+    # Junk Yahoo symbols (e.g. old APPLES=X) often return a shell with no tradeable quote.
+    if last is None and info.get("bid") is None and info.get("ask") is None:
+        raise ValueError(f"No tradeable quote for `{yahoo}`")
 
     return Security(
         symbol=yahoo,
@@ -456,6 +480,13 @@ def resolve(symbol: str) -> Security:
         days_to_cover=_float(info.get("shortRatio")),
         bid=_float(info.get("bid")),
         ask=_float(info.get("ask")),
+        bid_size=_float(info.get("bidSize")),
+        ask_size=_float(info.get("askSize")),
+        avg_volume_10d=_float(
+            _first(info.get("averageDailyVolume10Day"), info.get("averageVolume10days"))
+        ),
+        post_market=_float(info.get("postMarketPrice")),
+        pre_market=_float(info.get("preMarketPrice")),
         open_interest=_float(info.get("openInterest")),
         strike=_float(strike),
         expiry=expiry or _as_iso(info.get("expireDate")),
