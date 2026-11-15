@@ -68,6 +68,8 @@ BUG_COMMANDS = [
     "heatmap",
     "fgi",
     "paper",
+    "leaderboard",
+    "pnl",
     "autocomplete",
 ]
 
