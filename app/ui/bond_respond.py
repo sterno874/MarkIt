@@ -23,14 +23,29 @@ def bond_embed(bond: BondQuote) -> discord.Embed:
 
 
 async def send_bond_card(
-    interaction: discord.Interaction,
+    destination: discord.abc.Messageable | discord.Interaction,
     bond: BondQuote,
     *,
     ephemeral: bool = False,
 ) -> None:
+    view = BondPill(bond)
     try:
-        await interaction.followup.send(view=BondPill(bond), ephemeral=ephemeral)
+        if isinstance(destination, discord.Interaction):
+            if destination.response.is_done():
+                await destination.followup.send(view=view, ephemeral=ephemeral)
+            else:
+                await destination.response.send_message(view=view, ephemeral=ephemeral)
+        else:
+            await destination.send(view=view)
         return
     except Exception as exc:
         log.warning("BondPill send failed (%s); falling back to embed", exc)
-    await interaction.followup.send(embed=bond_embed(bond), ephemeral=ephemeral)
+
+    embed = bond_embed(bond)
+    if isinstance(destination, discord.Interaction):
+        if destination.response.is_done():
+            await destination.followup.send(embed=embed, ephemeral=ephemeral)
+        else:
+            await destination.response.send_message(embed=embed, ephemeral=ephemeral)
+    else:
+        await destination.send(embed=embed)

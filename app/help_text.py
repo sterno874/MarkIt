@@ -3,10 +3,10 @@ from __future__ import annotations
 HELP_OVERVIEW = """
 # Market Desk
 
-Paste a ticker (`AAPL`, `$NVDA`, `EURUSD`, `BTC`, `CL=F`) or use slash commands.
-The bot posts a Bloomberg-style pill with quote + function buttons.
+**Chat:** ping the bot — `@MarkIt AAPL` · `@MarkIt chart NVDA` · `@MarkIt apples volume past week`
+**Slash:** `/markit …` works raw (no ping) — same desk agent.
 
-**Easiest:** `/markit show me the chart on AAPL` — plain English, no command memorization.
+Other slash commands (`/quote`, `/chart`, …) still work. The bot no longer auto-replies to bare tickers.
 
 **Asset types:** equities · ETFs · indices · FX · crypto · futures · options · **individual corporate bonds (TRACE)** · bond ETFs / rates
 
@@ -17,7 +17,7 @@ HELP_TOPICS: dict[str, str] = {
     "tickers": """
 ## Tickers & the pill
 
-- Paste `$AAPL` or a message that is only a symbol → pill with price and buttons
+- `@MarkIt AAPL` (or `/markit AAPL`) → pill with price and buttons
 - Pills are **IB-style live**: green/red accent for the day, auto-refresh ~every 20s for ~12 minutes, **Refresh** button to tick now
 - Buttons map to Bloomberg-style functions: **GP** chart, **DES** description, **FA** financials, **CN** news, **PHDC** holders, **ANR** analysts, **ERN** earnings, **DVD** dividends
 - The channel remembers the last ticker for a few minutes, so `/chart` with no symbol uses it
@@ -132,11 +132,11 @@ Each fill is attributed to the Discord user who booked it. Leaderboard = realize
     "ask": """
 ## Natural language (`/markit`) + Gemini (`/ask`)
 
-`/markit show me apples volume for the past week` — agent picks a desk tool and posts the artifact (volume chart, price chart, pill, filings…).
+`@MarkIt show me apples volume for the past week` — or raw `/markit …` — agent picks a desk tool and posts the artifact (volume chart, price chart, pill, filings…).
 Works offline via local parsing; uses Gemini only when the phrase is ambiguous.
 
 `/ask What happened to NVDA after earnings?` — free-form Gemini Q&A (needs `GEMINI_API_KEY`).
-You can also @mention the bot with a question.
+Chat desk: `@MarkIt …` · raw slash: `/markit …`
 """.strip(),
     "bugs": """
 ## Bug tickets

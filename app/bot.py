@@ -9,19 +9,9 @@ from discord.ext import commands
 
 from app.config import GUILD_IDS
 from app.db import db
-from app.market.bonds import looks_like_bond_query, resolve_bond
-from app.market.quotes import get_security
-from app.security import extract_tickers
-from app.services.dispatch import run_blocking, send_function
 from app.services.workers import DeskWorkers
-from app.ui.bond_pill import BondPill
 from app.ui.pill import EXPAND_TEMPLATE, FN_TEMPLATE, REFRESH_TEMPLATE
-from app.ui.ticker_respond import (
-    publish_ticker_pill,
-    refresh_ticker_message,
-    set_ticker_pill_expanded,
-)
-from app.services import gemini
+from app.ui.ticker_respond import refresh_ticker_message, set_ticker_pill_expanded
 
 log = logging.getLogger("market-desk")
 
@@ -215,63 +205,20 @@ class DeskBot(commands.Bot):
         if message.author.bot or not message.guild:
             return
 
-        # @mention → Gemini ask
-        if self.user and self.user.mentioned_in(message) and gemini.available():
-            question = message.content
-            for mention in message.mentions:
-                question = question.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
-            question = question.strip()
-            if question:
-                async with message.channel.typing():
-                    try:
-                        last = db.get_last_ticker(message.guild.id, message.channel.id)
-                        answer = await run_blocking(
-                            gemini.ask,
-                            question,
-                            context=f"Last ticker: {last}" if last else None,
-                        )
-                        await message.reply(answer[:1900], mention_author=False)
-                    except Exception as exc:
-                        await message.reply(f"Gemini error: {exc}", mention_author=False)
+        # Chat desk only via @MarkIt …  (/markit slash stays raw, no ping needed)
+        if self.user and self.user.mentioned_in(message):
+            # Ignore @everyone / @here false-positives when bot isn't actually mentioned.
+            if self.user not in message.mentions:
+                await self.process_commands(message)
                 return
+            from app.cogs.markit import MarkIt, strip_bot_mentions
 
-        content = message.content.strip()
-        if not content or content.startswith("/") or content.startswith("!"):
-            await self.process_commands(message)
-            return
-
-        # Full-message bond query
-        if looks_like_bond_query(content) and (
-            " " in content or re.fullmatch(r"[0-9A-Za-z]{9}", content)
-        ):
-            try:
+            request = strip_bot_mentions(message.content, self.user)
+            cog = self.get_cog("MarkIt")
+            if isinstance(cog, MarkIt):
                 async with message.channel.typing():
-                    bond = await resolve_bond(content)
-                if bond.cusip:
-                    db.set_last_ticker(message.guild.id, message.channel.id, bond.cusip)
-                await message.channel.send(view=BondPill(bond))
-            except Exception as exc:
-                log.info("bond resolve failed for %r: %s", content, exc)
+                    await cog.handle_mention(message, request)
             return
-
-        tickers = extract_tickers(content, limit=2)
-        if not tickers:
-            await self.process_commands(message)
-            return
-
-        # Avoid firing on long prose unless $TICKER is used
-        if "$" not in content and not re.fullmatch(r"[\$]?[A-Za-z^][A-Za-z0-9.\-=/]{0,24}", content):
-            await self.process_commands(message)
-            return
-
-        for symbol in tickers:
-            try:
-                async with message.channel.typing():
-                    sec = await run_blocking(get_security, symbol)
-                db.set_last_ticker(message.guild.id, message.channel.id, sec.yahoo)
-                await publish_ticker_pill(message.channel, sec)
-            except Exception as exc:
-                log.info("quote failed for %s: %s", symbol, exc)
 
         await self.process_commands(message)
 
