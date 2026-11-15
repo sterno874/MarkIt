@@ -95,7 +95,7 @@ class Alerts(commands.Cog):
         self,
         interaction: discord.Interaction,
         symbol: str,
-        min_value: float = 100_000,
+        min_value: float = 100_000.0,
         note: str | None = None,
     ) -> None:
         await self._add(interaction, symbol, "insider", {"min_value": min_value}, note)
