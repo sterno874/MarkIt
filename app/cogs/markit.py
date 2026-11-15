@@ -222,22 +222,25 @@ class MarkIt(commands.Cog):
         symbol = normalize_symbol(symbol)
         await self._remember(ctx, symbol)
 
-        if action == "chart":
-            buf = await run_blocking(charts.render_chart, symbol, intent.period)
-            await ctx.send(
-                file=discord.File(
-                    buf,
-                    filename=f"{symbol.replace('^', '').replace('=', '')}-chart.png",
-                )
+        if action in {"chart", "volume"}:
+            chart_symbol = symbol
+            # Option OCC has no Yahoo history — chart/volume the underlying.
+            if re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbol.upper()):
+                try:
+                    opt = await run_blocking(get_security, symbol)
+                    chart_symbol = opt.underlying or symbol
+                except Exception:
+                    m = re.match(r"^([A-Z]{1,6})", symbol.upper())
+                    chart_symbol = m.group(1) if m else symbol
+            renderer = (
+                charts.render_chart if action == "chart" else charts.render_volume_chart
             )
-            return
-
-        if action == "volume":
-            buf = await run_blocking(charts.render_volume_chart, symbol, intent.period)
+            buf = await run_blocking(renderer, chart_symbol, intent.period)
+            suffix = "chart" if action == "chart" else "volume"
             await ctx.send(
                 file=discord.File(
                     buf,
-                    filename=f"{symbol.replace('^', '').replace('=', '')}-volume.png",
+                    filename=f"{chart_symbol.replace('^', '').replace('=', '')}-{suffix}.png",
                 )
             )
             return

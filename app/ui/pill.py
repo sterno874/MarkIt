@@ -191,6 +191,8 @@ def pill_text(
 
 def function_buttons(sec: Security) -> list[ui.Button]:
     symbol = sec.yahoo
+    # Option contracts have no Yahoo history — chart the underlying instead.
+    chart_symbol = (sec.underlying or symbol) if sec.is_option else symbol
     buttons: list[ui.Button] = [
         ui.Button(
             label="Refresh",
@@ -199,7 +201,11 @@ def function_buttons(sec: Security) -> list[ui.Button]:
             else discord.ButtonStyle.danger,
             custom_id=f"md:ref:{symbol}",
         ),
-        ui.Button(label="GP Chart", style=discord.ButtonStyle.primary, custom_id=f"md:fn:gp:{symbol}"),
+        ui.Button(
+            label="GP Chart",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"md:fn:gp:{chart_symbol}",
+        ),
         ui.Button(label="DES", style=discord.ButtonStyle.secondary, custom_id=f"md:fn:des:{symbol}"),
     ]
     if sec.is_equity_like:

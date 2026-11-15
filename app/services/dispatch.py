@@ -27,7 +27,15 @@ async def send_function(
     fn = fn.lower()
     try:
         if fn == "gp":
-            await _send_chart(destination, symbol, ephemeral=ephemeral)
+            # OCC contracts don't have Yahoo OHLCV — fall back to underlying.
+            chart_symbol = symbol
+            try:
+                sec0 = await run_blocking(get_security, symbol)
+                if sec0.is_option and sec0.underlying:
+                    chart_symbol = sec0.underlying
+            except Exception:
+                pass
+            await _send_chart(destination, chart_symbol, ephemeral=ephemeral)
         elif fn == "des":
             sec = await run_blocking(get_security, symbol)
             if isinstance(destination, discord.Interaction):

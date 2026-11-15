@@ -495,6 +495,7 @@ def parse_local(text: str, *, last_ticker: str | None = None) -> Intent | None:
     symbols = _extract_symbols(text)
     action = _detect_action(text) or ""
     # Bare / quoted option contract → quote that OCC, not the equity root.
+    # Chart/volume stay as-is; the cog charts the underlying for OCC symbols.
     if symbols and re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbols[0].upper()):
         if not action or action in {"quote", "options"}:
             action = "quote"
